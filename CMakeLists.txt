@@ -21,8 +21,8 @@ enable_testing()
 find_package(CUDAToolkit REQUIRED)
 
 add_executable(${PROJECT_NAME}
-    tests/main.cpp
-    tests/functions.hpp
+    tests/main.cu
+    tests/functions.cuh
     src/dense_matrix_cuda.cuh
     src/dense_matrix_cuda.cu
 )
@@ -43,6 +43,7 @@ target_include_directories( ${PROJECT_NAME}
     PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
+    ${CUDAToolkit_INCLUDE_DIRS}
 )
 
 include( GoogleTest )
