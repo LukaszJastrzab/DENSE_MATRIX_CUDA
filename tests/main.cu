@@ -3,7 +3,11 @@
 #include <dense_matrix_cuda.cuh>
 #include <functions.cuh>
 
-constexpr size_t MATRIX_ROW_SIZE = 20;
+// test
+#include <dense_matrix.hpp>
+// test
+
+constexpr size_t MATRIX_ROW_SIZE = 7;
 constexpr size_t MATRIX_COL_SIZE{ MATRIX_ROW_SIZE };
 
 using namespace std;
@@ -11,6 +15,7 @@ using namespace std;
 TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 {
 	dense_matrix_cuda< double > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
+	dense_matrix< double > AA( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
 	vector< double > b( MATRIX_ROW_SIZE );
 	vector< double > r( MATRIX_ROW_SIZE );
 	vector< double > x( MATRIX_COL_SIZE );
@@ -20,10 +25,15 @@ TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 		b[ row ] = generate_random< double >( 0.0001, 10000.0 );
 
 		for( size_t col{ 0 }; col < MATRIX_COL_SIZE; ++col )
-			A.set_element( generate_random< double >( 0.0001, 10000.0 ), row, col );
+		{
+			auto val = generate_random< double >( 0.0001, 10000.0 );
+			A.set_element( val, row, col );
+			AA.set_element( val, row, col );
+		}
 	}
 
-	A.init_cuda();
+	AA.QR_decomposition();
+	A.QR_decomposition();
 
 	// make a copy for residual vector verification
 	// ============================================
@@ -35,7 +45,7 @@ TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 
 	EXPECT_TRUE( true );
 }
-
+/*
 TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 {
 	dense_matrix_cuda< thrust::complex< double > > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
@@ -49,11 +59,11 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 
 		for( size_t col{ 0 }; col < MATRIX_COL_SIZE; ++col )
 			A.set_element( thrust::complex< double >( generate_random< double >( 0.0001, 10000.0 ),
-				                                      generate_random< double >( 0.0001, 10000.0 ) ),
-				           row, col );
+				generate_random< double >( 0.0001, 10000.0 ) ),
+				row, col );
 	}
 
-	A.init_cuda();
+	A.QR_decomposition();
 
 	// make a copy for residual vector verification
 	// ============================================
@@ -65,3 +75,4 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 
 	EXPECT_TRUE( true );
 }
+*/

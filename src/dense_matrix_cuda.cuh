@@ -29,25 +29,16 @@ public:
 
 	/// sets matrix sizes and allocates memory
 	void init( size_t rows, size_t cols );
-	/// initializes CUDA data
-	void init_cuda();
 	/// adds elements and throws exception if row / col is out of range
 	void set_element( T value, size_t row, size_t col );
 
+	/// performs QR decomposition using CUDA data
+	void QR_decomposition();
 	/// decomposes matrix "in situ" to factors QR using Householder method
-	__device__
-	void QR_step( const int step );
+	//__device__
+	//void QR_step( const int step );
 
 private:
-
-	/// divide to upper value
-	__host__ __device__
-	int div_up( int a, int b ) const;
-
-	/// calculates index to flattened matrix element
-	__host__ __device__
-	size_t calc_elem_idx( size_t row, size_t col );
-
 	/// current state of matrix
 	DYNAMIC_STATE m_dynamic_state{ DYNAMIC_STATE::INIT };
 
@@ -72,11 +63,44 @@ private:
 	T* m_d_v_firsts{ nullptr };
 };
 
-template< typename T >
-__host__ __device__
-int dense_matrix_cuda< T >::div_up( int a, int b ) const
+__host__ __device__ __forceinline__
+int div_up( int a, int b )
 {
-    return ( a + b - 1 ) / b;
+	return ( a + b - 1 ) / b;
+}
+
+__host__ __device__ __forceinline__
+size_t calc_elem_idx( size_t row, size_t col, size_t A_cols )
+{
+	return col + row * A_cols;
+}
+
+template< typename T >
+__host__ __device__ __forceinline__
+double norm2( const T& x )
+{
+	return x * x;
+}
+
+template< typename T >
+__host__ __device__ __forceinline__
+double norm2( const thrust::complex< T >& x )
+{
+	return thrust::norm( x );
+}
+
+template< typename T >
+__host__ __device__ __forceinline__
+double abs_val( const T& x )
+{
+	return x >= T( 0 ) ? x : -x;
+}
+
+template< typename T >
+__host__ __device__ __forceinline__
+double abs_val( const thrust::complex< T >& x )
+{
+	return thrust::abs( x );
 }
 
 template< typename T >
@@ -116,29 +140,9 @@ void dense_matrix_cuda< T >::init( size_t rows, size_t cols )
 }
 
 template< typename T >
-void dense_matrix_cuda< T >::init_cuda()
-{
-	cudaMalloc( &m_d_matrix, m_matrix.size() * sizeof( T ) );
-	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
-
-	auto max_steps = std::min( m_rows - 1, m_cols );
-
-	cudaMalloc( &m_d_betas, max_steps * sizeof( T ) );
-	cudaMalloc( &m_d_v_firsts, max_steps * sizeof( T ) );
-}
-
-template< typename T >
-__host__ __device__
-size_t dense_matrix_cuda< T >::calc_elem_idx( size_t row, size_t col )
-{
-	return col + row * m_cols;
-}
-
-
-template< typename T >
 void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 {
-	auto elem_idx = calc_elem_idx( row, col );
+	auto elem_idx = calc_elem_idx( row, col, m_cols );
 
 	if( elem_idx >= m_matrix.size() )
 		throw std::out_of_range( "dense_matrix_cuda< T >::set_element - elem_idx >= m_matrix.size()" );
@@ -147,25 +151,26 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 }
 
 template< typename T >
-__device__
-void dense_matrix_cuda< T >::QR_step( const int step )
+__global__
+void QR_step( T* A, const int A_rows, const int A_cols, const int step )
 {
-	extern __shared__ T sdata[]; // size = blocksize + m_rows
+	extern __shared__ unsigned char sdata_raw[];
+	T* sdata = reinterpret_cast< T* >( sdata_raw );
 
 	int tid = threadIdx.x + threadIdx.y * blockDim.x;
 	int block_size = blockDim.x * blockDim.y;
 
 	// first calculate sub column norm
 	// ===============================
-	int col_len = m_rows - step;
+	int col_len = A_rows - step;
 	int col_len_per_thread = div_up( col_len, block_size );
 
 	T sum{};
 
 	int row = step + tid;
-	while( row < m_rows )
+	while( row < A_rows )
 	{
-		sum += thrust::norm( m_d_matrix[ calc_elem_idx( row, step ) ] );
+		sum += norm2( A[ calc_elem_idx( row, step, A_cols ) ] );
 		row += block_size;
 	}
 
@@ -183,16 +188,30 @@ void dense_matrix_cuda< T >::QR_step( const int step )
 
 	if( tid == 0 )
 	{
-		T a_kk = m_d_matrix[ calc_elem_idx( step, step ) ];
-		double alpha_abs = std::abs( a_kk );
-		T sign = ( alpha_abs != 0.0 ? -( a_kk ) / alpha_abs : T{ -1 } );
-		T sign_norm = sign * col_norm;
+		T a_kk = A[ calc_elem_idx( step, step, A_cols ) ];
+		double alpha_abs = abs_val( a_kk );
+		T sign = ( alpha_abs != 0.0 ? -( a_kk ) / T( alpha_abs ) : T{ -1 } );
+		T sign_norm = sign * sqrt( sdata[ 0 ] );
+		A[ 0 ] = sign_norm; // for tests
 	}
 
 	__syncthreads();
+}
 
+template< typename T >
+void dense_matrix_cuda< T >::QR_decomposition()
+{
+	cudaMalloc( &m_d_matrix, m_matrix.size() * sizeof( T ) );
+	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 
+	auto max_steps = std::min( m_rows - 1, m_cols );
 
+	cudaMalloc( &m_d_betas, max_steps * sizeof( T ) );
+	cudaMalloc( &m_d_v_firsts, max_steps * sizeof( T ) );
 
-
+	const int TX = 16, TY = 8;
+	const int lmem_size = TX * TY / sizeof( double );
+	const dim3 blockSize( TX, TY );
+	const dim3 gridSize( div_up( m_cols, TX ), div_up( m_rows, TY ) );
+	QR_step<<< gridSize, blockSize, lmem_size >>>( m_d_matrix, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
 }
