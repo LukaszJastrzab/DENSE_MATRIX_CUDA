@@ -105,14 +105,14 @@ double abs_val( const thrust::complex< T >& x )
 
 template< typename T >
 __host__ __device__ __forceinline__
-double conjugate( const T& x )
+T conjugate( const T& x )
 {
 	return x;
 }
 
 template< typename T >
 __host__ __device__ __forceinline__
-double conjugate( const thrust::complex< T >& x )
+thrust::complex< T > conjugate( const thrust::complex< T >& x )
 {
 	return thrust::conj( x );
 }
@@ -166,32 +166,36 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 
 template< typename T >
 __global__
-void QR_step( T* A, const int A_rows, const int A_cols, const int step )
+void QR_step( T* A, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step )
 {
 	int tid = threadIdx.x + threadIdx.y * blockDim.x;
 	int block_size = blockDim.x * blockDim.y;
 
 	extern __shared__ unsigned char sdata_raw[];
-	double* sdata = reinterpret_cast< double* >( sdata_raw );
+	double* ndata = reinterpret_cast< double* >( sdata_raw );
 	T* vTv = reinterpret_cast< T* >( sdata_raw + block_size * sizeof( double ) );
 	T* v = reinterpret_cast< T* >( sdata_raw + block_size * ( sizeof( double ) + sizeof( T ) ) );
 
 	// first calculate sub column norm
+	// and multiplication vTv
 	// ===============================
 	int col_len = A_rows - step;
 	int col_len_per_thread = div_up( col_len, block_size );
 
 	double sum{};
+	T vTv_sum{};
 
 	int row = step + tid;
 	while( row < A_rows )
 	{
 		v[ row ] = A[ calc_elem_idx( row, step, A_cols ) ];
 		sum += norm2( v[ row ] );
+		vTv_sum += conjugate( v[ row ] ) * v[ row ];
 		row += block_size;
 	}
 
-	sdata[ tid ] = sum;
+	ndata[ tid ] = sum;
+	vTv[ tid ] = vTv_sum;
 	__syncthreads();
 
 	// sum up using reduction
@@ -199,7 +203,10 @@ void QR_step( T* A, const int A_rows, const int A_cols, const int step )
 	for( unsigned int s = block_size / 2; s > 0; s >>= 1 )
 	{
 		if( tid < s )
-			sdata[ tid ] += sdata[ tid + s ];
+		{
+			ndata[ tid ] += ndata[ tid + s ];
+			vTv[ tid ] += vTv[ tid + s ];
+		}
 		__syncthreads();
 	}
 
@@ -208,21 +215,23 @@ void QR_step( T* A, const int A_rows, const int A_cols, const int step )
 		T a_kk = v[ 0 ];
 		double alpha_abs = abs_val( a_kk );
 		T sign = ( alpha_abs != 0.0 ? -( a_kk ) / T( alpha_abs ) : T{ -1 } );
-		T sign_norm = sign * sqrt( sdata[ 0 ] );
+		T sign_norm = sign * sqrt( ndata[ 0 ] );
+
+		vTv[ 0 ] -= conjugate( v[ 0 ] ) * v[ 0 ]; // subtract wrong element;
 		v[ 0 ] -= sign_norm;
-		A[ 0 ] = sign_norm;
+		vTv[ 0 ] += conjugate( v[ 0 ] ) * v[ 0 ]; // add right one
+
+		if( blockIdx.x == 0 && blockIdx.y == 0 )
+		{
+			A[ calc_elem_idx( step, step, A_cols ) ] = sign_norm;
+			betas[ step ] = 2.0 / vTv[ 0 ];
+			v_firsts[ step ] = v[ 0 ];
+		}
 	}
 	__syncthreads();
 
-	/*
-	T vTv{ conjugate( v[ step ] ) * v[ step ] };
 
-	for( size_t r{ step + 1 }; r < m_rows; ++r )
-	{
-		v[ r ] = m_matrix[ r ][ step ];
-		vTv += conj_if_complex( v[ r ] ) * v[ r ];
-	}
-	*/
+
 }
 
 template< typename T >
@@ -241,5 +250,5 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	const int lmem_size = TX * TY * ( sizeof( double ) + sizeof( T ) ) + v_size * sizeof( T );
 	const dim3 blockSize( TX, TY );
 	const dim3 gridSize( div_up( m_cols, TX ), div_up( m_rows, TY ) );
-	QR_step<<< gridSize, blockSize, lmem_size >>>( m_d_matrix, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
+	QR_step << < gridSize, blockSize, lmem_size >> > ( m_d_matrix, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
 }
