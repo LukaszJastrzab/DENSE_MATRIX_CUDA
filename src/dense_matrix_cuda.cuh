@@ -166,7 +166,7 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 
 template< typename T >
 __global__
-void QR_step( T* A, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step )
+void QR_step( T* A_in, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step, T* A_out )
 {
 	int tid = threadIdx.x + threadIdx.y * blockDim.x;
 	int block_size = blockDim.x * blockDim.y;
@@ -186,7 +186,9 @@ void QR_step( T* A, T* betas, T* v_firsts, const int A_rows, const int A_cols, c
 	int row = step + tid;
 	while( row < A_rows )
 	{
-		v[ row ] = A[ calc_elem_idx( row, step, A_cols ) ];
+		size_t a_idx = calc_elem_idx( row, step, A_cols );
+		v[ row ] = A_in[ a_idx ];
+		A_out[ a_idx ] = v[ row ];
 		sum += norm2( v[ row ] );
 		vTv_sum += conjugate( v[ row ] ) * v[ row ];
 		row += block_size;
@@ -221,19 +223,31 @@ void QR_step( T* A, T* betas, T* v_firsts, const int A_rows, const int A_cols, c
 
 		if( blockIdx.x == 0 && blockIdx.y == 0 )
 		{
-			A[ calc_elem_idx( step, step, A_cols ) ] = sign_norm;
+			A_out[ calc_elem_idx( step, step, A_cols ) ] = sign_norm;
 			betas[ step ] = 2.0 / vTv[ 0 ];
 			v_firsts[ step ] = v[ 0 ];
 		}
 	}
 	__syncthreads();
 
-	//T beta{ betas[ step ] };
+	// now reflect the rest part of matrix A
+	// =====================================
 
-	//int sub_cols = A_cols - step - 1;
-	//int sub_cols_per_thread = div_up( sub_cols, blockDim.y );
-	//int sub_rows = A_rows - step;
-	//int sub_rows_per_thread = div_up( sub_rows, blockDim.x );
+	/*
+
+	T beta{ betas[ step ] };
+
+	int col_grid_step = gridDim.y * blockDim.y;
+	int col = threadIdx.y + blockDim.y * blockIdx.y;
+	if( col == step )
+		col += col_grid_step; // avoid modification on column of index "step"
+
+	while( col < A_cols )
+	{
+
+	}
+
+	*/
 
 	//int 
 
@@ -252,6 +266,9 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	cudaMalloc( &m_d_betas, max_steps * sizeof( T ) );
 	cudaMalloc( &m_d_v_firsts, max_steps * sizeof( T ) );
 
+	T* d_matrix_out{ nullptr };
+	cudaMalloc( &d_matrix_out, m_matrix.size() * sizeof( T ) );
+
 	const int TX = 16, TY = 8;
 	const int v_size = m_rows - 0; // - step
 	                                // norm             // vTv            // v
@@ -265,5 +282,9 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	const dim3 blockSize( TX, TY );
 	const dim3 gridSize( div_up( m_cols, TX ), div_up( m_rows, TY ) );
-	QR_step <<< gridSize, blockSize, lmem_size >>> ( m_d_matrix, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
+	QR_step <<< gridSize, blockSize, lmem_size >>> ( m_d_matrix, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0, d_matrix_out );
+
+	std::swap( m_d_matrix, d_matrix_out );
+
+	cudaFree( d_matrix_out );
 }
