@@ -5,6 +5,7 @@
 
 // test
 #include <dense_matrix.hpp>
+#include <complex>
 // test
 
 constexpr size_t MATRIX_ROW_SIZE = 7;
@@ -45,10 +46,11 @@ TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 
 	EXPECT_TRUE( true );
 }
-/*
+
 TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 {
 	dense_matrix_cuda< thrust::complex< double > > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
+	dense_matrix< std::complex< double > > AA( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
 	vector< double > b( MATRIX_ROW_SIZE );
 	vector< double > r( MATRIX_ROW_SIZE );
 	vector< double > x( MATRIX_COL_SIZE );
@@ -58,11 +60,16 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 		b[ row ] = generate_random< double >( 0.0001, 10000.0 );
 
 		for( size_t col{ 0 }; col < MATRIX_COL_SIZE; ++col )
-			A.set_element( thrust::complex< double >( generate_random< double >( 0.0001, 10000.0 ),
-				generate_random< double >( 0.0001, 10000.0 ) ),
-				row, col );
+		{
+			double real = generate_random< double >( 0.0001, 10000.0 );
+			double imag = generate_random< double >( 0.0001, 10000.0 );
+
+			A.set_element( thrust::complex< double >( real, imag), row, col );
+			AA.set_element( std::complex< double >( real, imag ) , row, col );
+		}
 	}
 
+	AA.QR_decomposition();
 	A.QR_decomposition();
 
 	// make a copy for residual vector verification
@@ -75,4 +82,3 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 
 	EXPECT_TRUE( true );
 }
-*/

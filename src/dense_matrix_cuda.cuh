@@ -104,6 +104,20 @@ double abs_val( const thrust::complex< T >& x )
 }
 
 template< typename T >
+__host__ __device__ __forceinline__
+double conjugate( const T& x )
+{
+	return x;
+}
+
+template< typename T >
+__host__ __device__ __forceinline__
+double conjugate( const thrust::complex< T >& x )
+{
+	return thrust::conj( x );
+}
+
+template< typename T >
 dense_matrix_cuda< T >::dense_matrix_cuda( size_t rows, size_t cols )
 {
 	init( rows, cols );
@@ -154,23 +168,26 @@ template< typename T >
 __global__
 void QR_step( T* A, const int A_rows, const int A_cols, const int step )
 {
-	extern __shared__ unsigned char sdata_raw[];
-	T* sdata = reinterpret_cast< T* >( sdata_raw );
-
 	int tid = threadIdx.x + threadIdx.y * blockDim.x;
 	int block_size = blockDim.x * blockDim.y;
+
+	extern __shared__ unsigned char sdata_raw[];
+	double* sdata = reinterpret_cast< double* >( sdata_raw );
+	T* vTv = reinterpret_cast< T* >( sdata_raw + block_size * sizeof( double ) );
+	T* v = reinterpret_cast< T* >( sdata_raw + block_size * ( sizeof( double ) + sizeof( T ) ) );
 
 	// first calculate sub column norm
 	// ===============================
 	int col_len = A_rows - step;
 	int col_len_per_thread = div_up( col_len, block_size );
 
-	T sum{};
+	double sum{};
 
 	int row = step + tid;
 	while( row < A_rows )
 	{
-		sum += norm2( A[ calc_elem_idx( row, step, A_cols ) ] );
+		v[ row ] = A[ calc_elem_idx( row, step, A_cols ) ];
+		sum += norm2( v[ row ] );
 		row += block_size;
 	}
 
@@ -188,14 +205,24 @@ void QR_step( T* A, const int A_rows, const int A_cols, const int step )
 
 	if( tid == 0 )
 	{
-		T a_kk = A[ calc_elem_idx( step, step, A_cols ) ];
+		T a_kk = v[ 0 ];
 		double alpha_abs = abs_val( a_kk );
 		T sign = ( alpha_abs != 0.0 ? -( a_kk ) / T( alpha_abs ) : T{ -1 } );
 		T sign_norm = sign * sqrt( sdata[ 0 ] );
-		A[ 0 ] = sign_norm; // for tests
+		v[ 0 ] -= sign_norm;
+		A[ 0 ] = sign_norm;
 	}
-
 	__syncthreads();
+
+	/*
+	T vTv{ conjugate( v[ step ] ) * v[ step ] };
+
+	for( size_t r{ step + 1 }; r < m_rows; ++r )
+	{
+		v[ r ] = m_matrix[ r ][ step ];
+		vTv += conj_if_complex( v[ r ] ) * v[ r ];
+	}
+	*/
 }
 
 template< typename T >
@@ -210,7 +237,8 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	cudaMalloc( &m_d_v_firsts, max_steps * sizeof( T ) );
 
 	const int TX = 16, TY = 8;
-	const int lmem_size = TX * TY / sizeof( double );
+	const int v_size = m_rows - 0; // - step
+	const int lmem_size = TX * TY * ( sizeof( double ) + sizeof( T ) ) + v_size * sizeof( T );
 	const dim3 blockSize( TX, TY );
 	const dim3 gridSize( div_up( m_cols, TX ), div_up( m_rows, TY ) );
 	QR_step<<< gridSize, blockSize, lmem_size >>>( m_d_matrix, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
