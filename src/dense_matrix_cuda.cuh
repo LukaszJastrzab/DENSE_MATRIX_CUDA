@@ -179,8 +179,6 @@ void QR_step( T* A, T* betas, T* v_firsts, const int A_rows, const int A_cols, c
 	// first calculate sub column norm
 	// and multiplication vTv
 	// ===============================
-	int col_len = A_rows - step;
-	int col_len_per_thread = div_up( col_len, block_size );
 
 	double sum{};
 	T vTv_sum{};
@@ -230,7 +228,16 @@ void QR_step( T* A, T* betas, T* v_firsts, const int A_rows, const int A_cols, c
 	}
 	__syncthreads();
 
+	//T beta{ betas[ step ] };
 
+	//int sub_cols = A_cols - step - 1;
+	//int sub_cols_per_thread = div_up( sub_cols, blockDim.y );
+	//int sub_rows = A_rows - step;
+	//int sub_rows_per_thread = div_up( sub_rows, blockDim.x );
+
+	//int 
+
+	//T vTA{};
 
 }
 
@@ -247,8 +254,16 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	const int TX = 16, TY = 8;
 	const int v_size = m_rows - 0; // - step
+	                                // norm             // vTv            // v
 	const int lmem_size = TX * TY * ( sizeof( double ) + sizeof( T ) ) + v_size * sizeof( T );
+
+	cudaDeviceProp prop;
+	cudaGetDeviceProperties( &prop, 0 );
+
+	if( lmem_size > prop.sharedMemPerBlock )
+		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - not enough shared memory" );
+
 	const dim3 blockSize( TX, TY );
 	const dim3 gridSize( div_up( m_cols, TX ), div_up( m_rows, TY ) );
-	QR_step << < gridSize, blockSize, lmem_size >> > ( m_d_matrix, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
+	QR_step <<< gridSize, blockSize, lmem_size >>> ( m_d_matrix, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
 }
