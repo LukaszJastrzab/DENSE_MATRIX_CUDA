@@ -166,7 +166,7 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 
 template< typename T >
 __global__
-void QR_step( const T* A_in, T* A_out, T* betas, T* v_firsts, T* v, T* vTA, const int A_rows, const int A_cols, const int step )
+void QR_first_step( const T* A_in, T* A_out, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step )
 {
 	int tid = threadIdx.x + threadIdx.y * blockDim.x;
 	int block_size = blockDim.x * blockDim.y;
@@ -175,10 +175,6 @@ void QR_step( const T* A_in, T* A_out, T* betas, T* v_firsts, T* v, T* vTA, cons
 	double* ndata = reinterpret_cast< double* >( sdata_raw );
 	T* vTv = reinterpret_cast< T* >( sdata_raw + block_size * sizeof( double ) );
 
-	// first calculate sub column norm
-	// and multiplication vTv
-	// ===============================
-
 	double sum{};
 	T vTv_sum{};
 
@@ -186,10 +182,10 @@ void QR_step( const T* A_in, T* A_out, T* betas, T* v_firsts, T* v, T* vTA, cons
 	while( row < A_rows )
 	{
 		size_t a_idx = calc_elem_idx( row, step, A_cols );
-		v[ row ] = A_in[ a_idx ];
-		A_out[ a_idx ] = v[ row ];
-		sum += norm2( v[ row ] );
-		vTv_sum += conjugate( v[ row ] ) * v[ row ];
+		T a_rs = A_in[ a_idx ];
+		A_out[ a_idx ] = a_rs;
+		sum += norm2( a_rs );
+		vTv_sum += conjugate( a_rs ) * a_rs;
 		row += block_size;
 	}
 
@@ -211,46 +207,21 @@ void QR_step( const T* A_in, T* A_out, T* betas, T* v_firsts, T* v, T* vTA, cons
 
 	if( tid == 0 )
 	{
-		T a_kk = v[ step ];
-		double alpha_abs = abs_val( a_kk );
-		T sign = ( alpha_abs != 0.0 ? -( a_kk ) / T( alpha_abs ) : T{ -1 } );
+		size_t a_idx = calc_elem_idx( step, step, A_cols );
+		T a_ss = A_in[ a_idx ];
+		double alpha_abs = abs_val( a_ss );
+		T sign = ( alpha_abs != 0.0 ? -( a_ss ) / T( alpha_abs ) : T{ -1 } );
 		T sign_norm = sign * sqrt( ndata[ 0 ] );
 
-		vTv[ 0 ] -= conjugate( a_kk ) * a_kk; // subtract wrong element;
-		a_kk -= sign_norm;
-		v[ step ] = a_kk;
-		vTv[ 0 ] += conjugate( a_kk ) * a_kk; // add right one
+		vTv[ 0 ] -= conjugate( a_ss ) * a_ss; // subtract wrong element;
+		a_ss -= sign_norm;
+		vTv[ 0 ] += conjugate( a_ss ) * a_ss; // add right one
 
-		if( blockIdx.x == 0 && blockIdx.y == 0 )
-		{
-			A_out[ calc_elem_idx( step, step, A_cols ) ] = sign_norm;
-			betas[ step ] = 2.0 / vTv[ 0 ];
-			v_firsts[ step ] = v[ 0 ];
-		}
+		A_out[ a_idx ] = sign_norm;
+		betas[ step ] = 2.0 / vTv[ 0 ];
+		v_firsts[ step ] = a_ss;
 	}
 	__syncthreads();
-
-	// now reflect the rest part of matrix A
-	// =====================================
-	/*
-	T beta{ betas[ step ] };
-
-	int col_grid_step = gridDim.y * blockDim.y;
-	int col = threadIdx.y + blockDim.y * blockIdx.y;
-	if( col == step )
-		col += col_grid_step; // avoid modification on column of index "step"
-
-	while( col < A_cols )
-	{
-
-	}
-	*/
-
-
-	//int 
-
-	//T vTA{};
-
 }
 
 template< typename T >
@@ -266,26 +237,21 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	T* d_matrix_out{ nullptr };
 	cudaMalloc( &d_matrix_out, m_matrix.size() * sizeof( T ) );
-	T* v{ nullptr };
-	cudaMalloc( &v, m_rows * sizeof( T ) );
-	T* vTA{ nullptr };
-	cudaMalloc( &vTA, m_cols * sizeof( T ) );
 
-	const int TX = 16, TY = 8;
+	const int TX = 16, TY = 16;
 	const int lmem_size = TX * TY * ( sizeof( double ) + sizeof( T ) );
 
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties( &prop, 0 );
+
 	if( lmem_size > prop.sharedMemPerBlock )
 		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - not enough shared memory" );
 
 	const dim3 blockSize( TX, TY );
-	const dim3 gridSize( div_up( m_cols, TX ), div_up( m_rows, TY ) );
-	QR_step <<< gridSize, blockSize, lmem_size >>> ( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, v, vTA, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
+	const dim3 gridSize( 1, 1 );
+	QR_first_step <<< gridSize, blockSize, lmem_size >>> ( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
 
 	std::swap( m_d_matrix, d_matrix_out );
 
-	cudaFree( vTA );
-	cudaFree( v );
 	cudaFree( d_matrix_out );
 }
