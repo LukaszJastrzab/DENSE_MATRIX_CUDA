@@ -6,6 +6,8 @@
 
 #include <thrust/complex.h>
 
+#include "utilities.cuh"
+
 template< typename T >
 class dense_matrix_cuda
 {
@@ -50,72 +52,12 @@ private:
 	/// flattened matrix data
 	std::vector< T > m_matrix;
 
-	/// for LU decomposition
-	//std::vector< T > m_pivots;
-	/// for QR decomposition
-	//std::vector< T > m_betas;
-	//std::vector< T > m_v_firsts;
-
 	/// flattened matrix data for GPU device
 	T* m_d_matrix{ nullptr };
 	/// for QU decomposition (on device)
 	T* m_d_betas{ nullptr };
 	T* m_d_v_firsts{ nullptr };
 };
-
-__host__ __device__ __forceinline__
-int div_up( int a, int b )
-{
-	return ( a + b - 1 ) / b;
-}
-
-__host__ __device__ __forceinline__
-size_t calc_elem_idx( size_t row, size_t col, size_t A_cols )
-{
-	return col + row * A_cols;
-}
-
-template< typename T >
-__host__ __device__ __forceinline__
-double norm2( const T& x )
-{
-	return x * x;
-}
-
-template< typename T >
-__host__ __device__ __forceinline__
-double norm2( const thrust::complex< T >& x )
-{
-	return thrust::norm( x );
-}
-
-template< typename T >
-__host__ __device__ __forceinline__
-double abs_val( const T& x )
-{
-	return x >= T( 0 ) ? x : -x;
-}
-
-template< typename T >
-__host__ __device__ __forceinline__
-double abs_val( const thrust::complex< T >& x )
-{
-	return thrust::abs( x );
-}
-
-template< typename T >
-__host__ __device__ __forceinline__
-T conjugate( const T& x )
-{
-	return x;
-}
-
-template< typename T >
-__host__ __device__ __forceinline__
-thrust::complex< T > conjugate( const thrust::complex< T >& x )
-{
-	return thrust::conj( x );
-}
 
 template< typename T >
 dense_matrix_cuda< T >::dense_matrix_cuda( size_t rows, size_t cols )
@@ -224,6 +166,45 @@ void QR_first_step( const T* A_in, T* A_out, T* betas, T* v_firsts, const int A_
 	__syncthreads();
 }
 
+
+template< typename T >
+__global__
+void QR_compute_vTA( const T* A_in, T* vTA, const T* v_firsts, const int A_rows, const int A_cols, const int step )
+{
+	int col = step + threadIdx.x + blockDim.x * blockIdx.x + 1;
+
+	if( col >= A_cols )
+		return;
+
+	T sum{ v_firsts[ step ] * A_in[ calc_elem_idx( step, col, A_cols ) ] };
+
+	for( int s = step + 1; s < A_rows; ++s )
+		sum += A_in[ calc_elem_idx( s, step, A_cols ) ] * A_in[ calc_elem_idx( s, col, A_cols ) ];
+
+	vTA[ col ] = sum;
+}
+
+template< typename T >
+__global__
+void QR_compute_reflections( const T* A_in, T* A_out, const T* vTA, const T* betas, const T* v_firsts, const int A_rows, const int A_cols, const int step )
+{
+	int col = step + threadIdx.x + blockDim.x * blockIdx.x + 1;
+	int row = step + threadIdx.y + blockDim.y * blockIdx.y;
+
+	if( row >= A_rows || col >= A_cols )
+		return;
+
+	T beta = betas[ step ];
+	T vta = vTA[ col ];
+
+	int a_idx = calc_elem_idx( row, col, A_cols );
+
+	if( row > 0 )
+		A_out[ a_idx ] = A_in[ a_idx ] - beta * A_in[ calc_elem_idx( row, step, A_cols ) ] * vta;
+	else
+		A_out[ a_idx ] = A_in[ a_idx ] - beta * v_firsts[ step ] * vta;
+}
+
 template< typename T >
 void dense_matrix_cuda< T >::QR_decomposition()
 {
@@ -237,21 +218,44 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	T* d_matrix_out{ nullptr };
 	cudaMalloc( &d_matrix_out, m_matrix.size() * sizeof( T ) );
+	T* d_vTA{ nullptr };
+	cudaMalloc( &d_vTA, m_cols * sizeof( T ) );
 
-	const int TX = 16, TY = 16;
-	const int lmem_size = TX * TY * ( sizeof( double ) + sizeof( T ) );
+	const int TX1 = 16, TY1 = 16;
+	const int st1_lmem_size = TX1 * TY1 * ( sizeof( double ) + sizeof( T ) );
+	const int TX2 = 256;
 
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties( &prop, 0 );
 
-	if( lmem_size > prop.sharedMemPerBlock )
+	if( st1_lmem_size > prop.sharedMemPerBlock )
 		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - not enough shared memory" );
 
-	const dim3 blockSize( TX, TY );
-	const dim3 gridSize( 1, 1 );
-	QR_first_step <<< gridSize, blockSize, lmem_size >>> ( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), 0 );
+	{
+		int step = 0;
 
-	std::swap( m_d_matrix, d_matrix_out );
+		const dim3 blockSize1( TX1, TY1 );
+		const dim3 gridSize1( 1, 1 );
+		QR_first_step <<< gridSize1, blockSize1, st1_lmem_size >>>
+			( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), step );
 
+		const dim3 blockSize2( TX2 );
+		const dim3 gridSize2( div_up( m_cols, TX2 ) );
+		QR_compute_vTA <<< gridSize2, blockSize2 >>>
+			( m_d_matrix, d_vTA, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), step );
+
+
+		// test
+		//const int size = 7;
+		//T vTA[ 7 ];
+		//cudaMemcpy( vTA, d_vTA, size * sizeof( T ), cudaMemcpyDeviceToHost );
+		//vTA[ 0 ] = vTA[ 0 ];
+		// test
+
+
+		std::swap( m_d_matrix, d_matrix_out );
+	}
+
+	cudaFree( d_vTA );
 	cudaFree( d_matrix_out );
 }

@@ -23,6 +23,7 @@ find_package(CUDAToolkit REQUIRED)
 add_executable(${PROJECT_NAME}
     tests/main.cu
     tests/functions.cuh
+    src/utilities.cuh
     src/dense_matrix_cuda.cuh
     src/dense_matrix_cuda.cu
     external/dense_matrix.hpp
