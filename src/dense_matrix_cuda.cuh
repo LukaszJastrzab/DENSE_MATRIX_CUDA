@@ -176,10 +176,10 @@ void QR_compute_vTA( const T* A_in, T* vTA, const T* v_firsts, const int A_rows,
 	if( col >= A_cols )
 		return;
 
-	T sum{ v_firsts[ step ] * A_in[ calc_elem_idx( step, col, A_cols ) ] };
+	T sum{ conjugate( v_firsts[ step ] ) * A_in[ calc_elem_idx( step, col, A_cols ) ] };
 
 	for( int s = step + 1; s < A_rows; ++s )
-		sum += A_in[ calc_elem_idx( s, step, A_cols ) ] * A_in[ calc_elem_idx( s, col, A_cols ) ];
+		sum += conjugate( A_in[ calc_elem_idx( s, step, A_cols ) ] ) * A_in[ calc_elem_idx( s, col, A_cols ) ];
 
 	vTA[ col ] = sum;
 }
@@ -224,6 +224,7 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	const int TX1 = 16, TY1 = 16;
 	const int st1_lmem_size = TX1 * TY1 * ( sizeof( double ) + sizeof( T ) );
 	const int TX2 = 256;
+	const int TX3 = 16, TY3 = 16;
 
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties( &prop, 0 );
@@ -234,16 +235,23 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	{
 		int step = 0;
 
+		const int d_rows{ static_cast< int >( m_rows ) };
+		const int d_cols{ static_cast< int >( m_cols ) };
+
 		const dim3 blockSize1( TX1, TY1 );
 		const dim3 gridSize1( 1, 1 );
 		QR_first_step <<< gridSize1, blockSize1, st1_lmem_size >>>
-			( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), step );
+			( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, d_rows, d_cols, step );
 
 		const dim3 blockSize2( TX2 );
 		const dim3 gridSize2( div_up( m_cols, TX2 ) );
 		QR_compute_vTA <<< gridSize2, blockSize2 >>>
-			( m_d_matrix, d_vTA, m_d_v_firsts, static_cast< int >( m_rows ), static_cast< int >( m_cols ), step );
+			( m_d_matrix, d_vTA, m_d_v_firsts, d_rows, d_cols, step );
 
+		const dim3 blockSize3( TX3, TY3 );
+		const dim3 gridSize3( div_up( m_cols, TX3 ), div_up( m_rows, TY3 ) );
+		QR_compute_reflections <<< gridSize3, blockSize3 >>>
+			( m_d_matrix, d_matrix_out, d_vTA, m_d_betas, m_d_v_firsts, d_rows, d_cols, step );
 
 		// test
 		//const int size = 7;
@@ -252,8 +260,15 @@ void dense_matrix_cuda< T >::QR_decomposition()
 		//vTA[ 0 ] = vTA[ 0 ];
 		// test
 
-
 		std::swap( m_d_matrix, d_matrix_out );
+
+		//const int size = 7 * 7;
+		//T AAA[ size ];
+		//cudaMemcpy( AAA, m_d_matrix, size * sizeof( T ), cudaMemcpyDeviceToHost );
+		//AAA[ 0 ] = AAA[ 0 ];
+
+
+
 	}
 
 	cudaFree( d_vTA );
