@@ -29,6 +29,28 @@ double norm2( const thrust::complex< T >& x )
 }
 
 template< typename T >
+inline double l2_norm( const std::vector< T >& v )
+{
+	double sum{};
+
+	for( const auto& item : v )
+		sum += norm2( item );
+
+	return std::sqrt( sum );
+}
+
+template< typename T >
+inline double l2_norm( const std::vector< thrust::complex< T > >& v )
+{
+	double sum{};
+
+	for( const auto& item : v )
+		sum += norm2( item );
+
+	return std::sqrt( sum );
+}
+
+template< typename T >
 __host__ __device__ __forceinline__
 double abs_val( const T& x )
 {

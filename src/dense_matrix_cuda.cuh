@@ -5,6 +5,7 @@
 #include <type_traits>
 
 #include <thrust/complex.h>
+#include <cublas_v2.h>
 
 #include "utilities.cuh"
 
@@ -34,11 +35,15 @@ public:
 	/// adds elements and throws exception if row / col is out of range
 	void set_element( T value, size_t row, size_t col );
 
+	// it counts value r := Ax - b
+	void count_residual_vector( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
+
 	/// performs QR decomposition using CUDA data
 	void QR_decomposition();
-	/// decomposes matrix "in situ" to factors QR using Householder method
-	//__device__
-	//void QR_step( const int step );
+	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
+	void solve_QR( std::vector< T >& x, const std::vector< T >& b ) const;
+
+
 
 private:
 	/// current state of matrix
@@ -51,12 +56,8 @@ private:
 
 	/// flattened matrix data
 	std::vector< T > m_matrix;
-
-	/// flattened matrix data for GPU device
-	T* m_d_matrix{ nullptr };
-	/// for QU decomposition (on device)
-	T* m_d_betas{ nullptr };
-	T* m_d_v_firsts{ nullptr };
+	/// additional data for QR decomposition
+	std::vector< T > m_betas, m_v_firsts;
 };
 
 template< typename T >
@@ -78,12 +79,6 @@ dense_matrix_cuda< T >::dense_matrix_cuda( const dense_matrix_cuda& A )
 template< typename T >
 dense_matrix_cuda< T >::~dense_matrix_cuda()
 {
-	if( m_d_matrix )
-		cudaFree( m_d_matrix );
-	if( m_d_betas )
-		cudaFree( m_d_betas );
-	if( m_d_v_firsts )
-		cudaFree( m_d_v_firsts );
 }
 
 template< typename T >
@@ -199,7 +194,7 @@ void QR_compute_reflections( const T* A_in, T* A_out, const T* vTA, const T* bet
 
 	int a_idx = calc_elem_idx( row, col, A_cols );
 
-	if( row < step || col <= step)
+	if( row < step || col <= step )
 		A_out[ a_idx ] = A_in[ a_idx ];
 	else
 	{
@@ -216,17 +211,17 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	if( m_dynamic_state != DYNAMIC_STATE::INIT )
 		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::INIT" );
 
-	cudaMalloc( &m_d_matrix, m_matrix.size() * sizeof( T ) );
-	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
+	T* d_matrix_in{ nullptr }, * d_matrix_out{ nullptr };
+	T* d_betas{ nullptr }, * d_v_firsts{ nullptr }, * d_vTA{ nullptr };
+
+	cudaMalloc( &d_matrix_in, m_matrix.size() * sizeof( T ) );
+	cudaMemcpy( d_matrix_in, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
+	cudaMalloc( &d_matrix_out, m_matrix.size() * sizeof( T ) );
 
 	auto max_steps = std::min( m_rows - 1, m_cols );
 
-	cudaMalloc( &m_d_betas, max_steps * sizeof( T ) );
-	cudaMalloc( &m_d_v_firsts, max_steps * sizeof( T ) );
-
-	T* d_matrix_out{ nullptr };
-	cudaMalloc( &d_matrix_out, m_matrix.size() * sizeof( T ) );
-	T* d_vTA{ nullptr };
+	cudaMalloc( &d_betas, max_steps * sizeof( T ) );
+	cudaMalloc( &d_v_firsts, max_steps * sizeof( T ) );
 	cudaMalloc( &d_vTA, m_cols * sizeof( T ) );
 
 	const int TX1 = 256;
@@ -242,36 +237,119 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	const int d_rows{ static_cast< int >( m_rows ) };
 	const int d_cols{ static_cast< int >( m_cols ) };
 
-	for ( int step{ 0 }; step < max_steps; ++step )
+	for( int step{ 0 }; step < max_steps; ++step )
 	{
-		QR_first_step <<< gridSize1, blockSize1, st1_lmem_size >>>
-			( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, d_rows, d_cols, step );
+		QR_first_step << < gridSize1, blockSize1, st1_lmem_size >> >
+			( d_matrix_in, d_matrix_out, d_betas, d_v_firsts, d_rows, d_cols, step );
 
 		//const dim3 gridSize2( div_up( m_cols, TX2 ) );
 		const dim3 gridSize2( div_up( m_cols - step - 1, TX2 ) );  // to be checked
 
-		QR_compute_vTA <<< gridSize2, blockSize2 >>>
-			( m_d_matrix, d_vTA, m_d_v_firsts, d_rows, d_cols, step );
+		QR_compute_vTA << < gridSize2, blockSize2 >> >
+			( d_matrix_in, d_vTA, d_v_firsts, d_rows, d_cols, step );
 
 		//const dim3 gridSize3( div_up( m_cols, TX3 ), div_up( m_rows, TY3 ) );
 		const dim3 gridSize3( div_up( m_cols - step, TX3 ), div_up( m_rows - step + 1, TY3 ) ); // to be checked
 
-		QR_compute_reflections <<< gridSize3, blockSize3 >>>
-			( m_d_matrix, d_matrix_out, d_vTA, m_d_betas, m_d_v_firsts, d_rows, d_cols, step );
+		QR_compute_reflections << < gridSize3, blockSize3 >> >
+			( d_matrix_in, d_matrix_out, d_vTA, d_betas, d_v_firsts, d_rows, d_cols, step );
 
-		std::swap( m_d_matrix, d_matrix_out );
+		std::swap( d_matrix_in, d_matrix_out );
 	}
 
-	// test
-	//const int size = 7 * 7;
-	//T AAA[ size ];
-	//cudaMemcpy( AAA, m_d_matrix, size * sizeof( T ), cudaMemcpyDeviceToHost );
-	//AAA[ 0 ] = AAA[ 0 ];
-	// test
+	cudaMemcpy( m_matrix.data(), d_matrix_in, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
 
+	m_betas.resize( max_steps );
+	cudaMemcpy( m_betas.data(), d_betas, max_steps * sizeof( T ), cudaMemcpyDeviceToHost );
+	m_v_firsts.resize( max_steps );
+	cudaMemcpy( m_v_firsts.data(), d_v_firsts, max_steps * sizeof( T ), cudaMemcpyDeviceToHost );
 
-	cudaFree( d_vTA );
+	cudaFree( d_matrix_in );
 	cudaFree( d_matrix_out );
+	cudaFree( d_betas );
+	cudaFree( d_v_firsts );
+	cudaFree( d_vTA );
 
 	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
 }
+
+
+template< typename T >
+void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+{
+	switch( m_dynamic_state )
+	{
+	case DYNAMIC_STATE::INIT:
+		if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
+			throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_vector - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
+
+		for( size_t row{ 0 }; row < m_rows; ++row )
+			r[ row ] = -b[ row ];
+		for( size_t row{ 0 }; row < m_rows; ++row )
+			for( size_t col{ 0 }; col < m_cols; ++col )
+				r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col, m_cols ) ] );
+		break;
+
+	default:
+		throw std::exception( "dense_matrix_cuda< T >::count_residual_vector - not supported dynamic state" );
+	}
+}
+
+
+template< typename T >
+void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T >& b ) const
+{
+	if( b.size() != m_rows )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR - b.size() != m_rows" );
+
+	if( m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR() - m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED" );
+
+	auto max_steps = std::min( m_rows - 1, m_cols );
+
+	// first x := Q^T * b = H_1 * H_2 * ... * H_k * b
+	// ==============================================
+	x = b;
+	for( size_t step{ 0 }; step < max_steps; ++step )
+	{
+		T vTb{ conjugate( m_v_firsts[ step ] ) * x[ step ] };
+		for( size_t r{ step + 1 }; r < m_rows; ++r )
+			vTb += conjugate( m_matrix[ calc_elem_idx( r, step, m_cols ) ] ) * x[ r ];
+
+		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
+		for( size_t r{ step + 1 }; r < m_rows; ++r )
+			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_cols ) ] * vTb;
+	}
+
+	// then solve Rx = Q^T * b by back substitution
+	// ============================================
+	for( auto r = static_cast< int >( m_cols ) - 1; r >= 0; --r )
+	{
+		T sum{ T{} };
+		for( int c{ r + 1 }; c < m_cols; ++c )
+			sum += m_matrix[ calc_elem_idx( r, c, m_cols ) ] * x[ c ];
+
+		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_cols ) ];
+	}
+}
+
+
+//cublasHandle_t handle;
+//cublasCreate( &handle );
+//
+//T* d_x{ nullptr };
+//cudaMalloc( d_x, b.size() * sizeof( T ) );
+//cudaMemxpy( d_x, b.data(), b.size() );
+//
+//auto quare_size = std::min( m_rows, m_cols );
+//cublasDtrsv(
+//	handle,
+//	CUBLAS_FILL_MODE_UPPER,
+//	CUBLAS_OP_N,
+//	CUBLAS_DIAG_NON_UNIT,
+//	quare_size,
+//	m_d_matrix,
+//	m_rows,
+//	d_x,
+//	1
+//);

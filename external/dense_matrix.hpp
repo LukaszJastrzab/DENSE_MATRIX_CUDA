@@ -233,19 +233,15 @@ void dense_matrix< T >::solve_QR( std::vector< T >& x, const std::vector< T >& b
 	// first x := Q^T * b = H_1 * H_2 * ... * H_k * b
 	// ==============================================
 	x = b;
-	std::vector< T > v( m_rows, T{} );
 	for( size_t step{ 0 }; step < max_steps; ++step )
 	{
-		v[ step ] = m_v_firsts[ step ];
+		T vTb{ conj_if_complex( m_v_firsts[ step ] ) * x[ step ] };
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			v[ r ] = m_matrix[ r ][ step ];
+			vTb += conj_if_complex( m_matrix[ r ][ step ] ) * x[ r ];
 
-		T vTb{ T{} };
-		for( size_t r{ step }; r < m_rows; ++r )
-			vTb += conj_if_complex( v[ r ] ) * x[ r ];
-
-		for( size_t r{ step }; r < m_rows; ++r )
-			x[ r ] -= m_betas[ step ] * v[ r ] * vTb;
+		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
+		for( size_t r{ step + 1 }; r < m_rows; ++r )
+			x[ r ] -= m_betas[ step ] * m_matrix[ r ][ step ] * vTb;
 	}
 
 	// then solve Rx = Q^T * b by back substitution
