@@ -108,7 +108,7 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 
 template< typename T >
 __global__
-void QR_first_step( const T* A_in, T* A_out, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step )
+void QR_first_step( T* A_in, T* A_out, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step )
 {
 	int tid = threadIdx.x + threadIdx.y * blockDim.x;
 	int block_size = blockDim.x * blockDim.y;
@@ -125,7 +125,6 @@ void QR_first_step( const T* A_in, T* A_out, T* betas, T* v_firsts, const int A_
 	{
 		size_t a_idx = calc_elem_idx( row, step, A_cols );
 		T a_rs = A_in[ a_idx ];
-		A_out[ a_idx ] = a_rs;
 		sum += norm2( a_rs );
 		vTv_sum += conjugate( a_rs ) * a_rs;
 		row += block_size;
@@ -159,7 +158,8 @@ void QR_first_step( const T* A_in, T* A_out, T* betas, T* v_firsts, const int A_
 		a_ss -= sign_norm;
 		vTv[ 0 ] += conjugate( a_ss ) * a_ss; // add right one
 
-		A_out[ a_idx ] = sign_norm;
+		A_in[ a_idx ] = sign_norm;
+
 		betas[ step ] = 2.0 / vTv[ 0 ];
 		v_firsts[ step ] = a_ss;
 	}
@@ -188,10 +188,10 @@ template< typename T >
 __global__
 void QR_compute_reflections( const T* A_in, T* A_out, const T* vTA, const T* betas, const T* v_firsts, const int A_rows, const int A_cols, const int step )
 {
-	int col = step + threadIdx.x + blockDim.x * blockIdx.x + 1;
-	int row = step + threadIdx.y + blockDim.y * blockIdx.y;
+	int col = step + threadIdx.x + blockDim.x * blockIdx.x;
+	int row = step + threadIdx.y + blockDim.y * blockIdx.y - 1;
 
-	if( row >= A_rows || col >= A_cols )
+	if( row >= A_rows || col >= A_cols || row < 0 )
 		return;
 
 	T beta = betas[ step ];
@@ -199,10 +199,15 @@ void QR_compute_reflections( const T* A_in, T* A_out, const T* vTA, const T* bet
 
 	int a_idx = calc_elem_idx( row, col, A_cols );
 
-	if( row > 0 )
-		A_out[ a_idx ] = A_in[ a_idx ] - beta * A_in[ calc_elem_idx( row, step, A_cols ) ] * vta;
+	if( row < step || col <= step)
+		A_out[ a_idx ] = A_in[ a_idx ];
 	else
-		A_out[ a_idx ] = A_in[ a_idx ] - beta * v_firsts[ step ] * vta;
+	{
+		if( row > step )
+			A_out[ a_idx ] = A_in[ a_idx ] - beta * A_in[ calc_elem_idx( row, step, A_cols ) ] * vta;
+		else
+			A_out[ a_idx ] = A_in[ a_idx ] - beta * v_firsts[ step ] * vta;
+	}
 }
 
 template< typename T >
@@ -223,53 +228,41 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	const int TX1 = 16, TY1 = 16;
 	const int st1_lmem_size = TX1 * TY1 * ( sizeof( double ) + sizeof( T ) );
+	const dim3 blockSize1( TX1, TY1 );
+	const dim3 gridSize1( 1, 1 );
+
 	const int TX2 = 256;
+	const dim3 blockSize2( TX2 );
+	const dim3 gridSize2( div_up( m_cols, TX2 ) );
+
 	const int TX3 = 16, TY3 = 16;
+	const dim3 blockSize3( TX3, TY3 );
+	const dim3 gridSize3( div_up( m_cols, TX3 ), div_up( m_rows, TY3 ) );
 
-	cudaDeviceProp prop;
-	cudaGetDeviceProperties( &prop, 0 );
+	const int d_rows{ static_cast< int >( m_rows ) };
+	const int d_cols{ static_cast< int >( m_cols ) };
 
-	if( st1_lmem_size > prop.sharedMemPerBlock )
-		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - not enough shared memory" );
-
+	for ( int step{ 0 }; step < max_steps; ++step )
 	{
-		int step = 0;
-
-		const int d_rows{ static_cast< int >( m_rows ) };
-		const int d_cols{ static_cast< int >( m_cols ) };
-
-		const dim3 blockSize1( TX1, TY1 );
-		const dim3 gridSize1( 1, 1 );
 		QR_first_step <<< gridSize1, blockSize1, st1_lmem_size >>>
 			( m_d_matrix, d_matrix_out, m_d_betas, m_d_v_firsts, d_rows, d_cols, step );
 
-		const dim3 blockSize2( TX2 );
-		const dim3 gridSize2( div_up( m_cols, TX2 ) );
 		QR_compute_vTA <<< gridSize2, blockSize2 >>>
 			( m_d_matrix, d_vTA, m_d_v_firsts, d_rows, d_cols, step );
 
-		const dim3 blockSize3( TX3, TY3 );
-		const dim3 gridSize3( div_up( m_cols, TX3 ), div_up( m_rows, TY3 ) );
 		QR_compute_reflections <<< gridSize3, blockSize3 >>>
 			( m_d_matrix, d_matrix_out, d_vTA, m_d_betas, m_d_v_firsts, d_rows, d_cols, step );
 
-		// test
-		//const int size = 7;
-		//T vTA[ 7 ];
-		//cudaMemcpy( vTA, d_vTA, size * sizeof( T ), cudaMemcpyDeviceToHost );
-		//vTA[ 0 ] = vTA[ 0 ];
-		// test
-
 		std::swap( m_d_matrix, d_matrix_out );
-
-		//const int size = 7 * 7;
-		//T AAA[ size ];
-		//cudaMemcpy( AAA, m_d_matrix, size * sizeof( T ), cudaMemcpyDeviceToHost );
-		//AAA[ 0 ] = AAA[ 0 ];
-
-
-
 	}
+
+	// test
+	const int size = 7 * 7;
+	T AAA[ size ], BBB[ size ];
+	cudaMemcpy( AAA, m_d_matrix, size * sizeof( T ), cudaMemcpyDeviceToHost );
+	AAA[ 0 ] = AAA[ 0 ];
+	// test
+
 
 	cudaFree( d_vTA );
 	cudaFree( d_matrix_out );
