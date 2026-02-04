@@ -110,8 +110,8 @@ template< typename T >
 __global__
 void QR_first_step( T* A_in, T* A_out, T* betas, T* v_firsts, const int A_rows, const int A_cols, const int step )
 {
-	int tid = threadIdx.x + threadIdx.y * blockDim.x;
-	int block_size = blockDim.x * blockDim.y;
+	int tid = threadIdx.x;
+	int block_size = blockDim.x;
 
 	extern __shared__ unsigned char sdata_raw[];
 	double* ndata = reinterpret_cast< double* >( sdata_raw );
@@ -213,6 +213,9 @@ void QR_compute_reflections( const T* A_in, T* A_out, const T* vTA, const T* bet
 template< typename T >
 void dense_matrix_cuda< T >::QR_decomposition()
 {
+	if( m_dynamic_state != DYNAMIC_STATE::INIT )
+		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::INIT" );
+
 	cudaMalloc( &m_d_matrix, m_matrix.size() * sizeof( T ) );
 	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 
@@ -226,13 +229,13 @@ void dense_matrix_cuda< T >::QR_decomposition()
 	T* d_vTA{ nullptr };
 	cudaMalloc( &d_vTA, m_cols * sizeof( T ) );
 
-	const int TX1 = 16, TY1 = 16;
+	const int TX1 = 256;
 	const int TX2 = 256;
 	const int TX3 = 16, TY3 = 16;
 
-	const int st1_lmem_size = TX1 * TY1 * ( sizeof( double ) + sizeof( T ) );
-	const dim3 blockSize1( TX1, TY1 );
-	const dim3 gridSize1( 1, 1 );
+	const int st1_lmem_size = TX1 * ( sizeof( double ) + sizeof( T ) );
+	const dim3 blockSize1( TX1 );
+	const dim3 gridSize1( 1 );
 	const dim3 blockSize2( TX2 );
 	const dim3 blockSize3( TX3, TY3 );
 
@@ -261,7 +264,7 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	// test
 	//const int size = 7 * 7;
-	//T AAA[ size ], BBB[ size ];
+	//T AAA[ size ];
 	//cudaMemcpy( AAA, m_d_matrix, size * sizeof( T ), cudaMemcpyDeviceToHost );
 	//AAA[ 0 ] = AAA[ 0 ];
 	// test
@@ -269,4 +272,6 @@ void dense_matrix_cuda< T >::QR_decomposition()
 
 	cudaFree( d_vTA );
 	cudaFree( d_matrix_out );
+
+	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
 }
