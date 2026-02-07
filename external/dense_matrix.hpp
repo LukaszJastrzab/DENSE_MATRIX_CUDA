@@ -5,27 +5,7 @@
 #include <type_traits>
 #include <stdexcept>
 
-template< typename T >
-double l2_norm( const std::vector< T >& v )
-{
-	double sum{ 0.0 };
-
-	for( const auto& vi : v )
-		sum += norm( vi );
-
-	return std::sqrt( sum );
-}
-
-
-template< typename T >
-T conj_if_complex( const T& x )
-{
-	if constexpr( std::is_floating_point_v< T > )
-		return x;
-	else
-		return std::conj( x );
-}
-
+#include <utilities.cuh>
 
 template< typename T >
 class dense_matrix
@@ -179,12 +159,12 @@ void dense_matrix< T >::QR_decomposition()
 		T sign_norm = sign * col_norm;
 
 		v[ step ] = m_matrix[ step ][ step ] - sign_norm;
-		T vTv{ conj_if_complex( v[ step ] ) * v[ step ] };
+		T vTv{ conjugate( v[ step ] ) * v[ step ] };
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
 		{
 			v[ r ] = m_matrix[ r ][ step ];
-			vTv += conj_if_complex( v[ r ] ) * v[ r ];
+			vTv += conjugate( v[ r ] ) * v[ r ];
 		}
 
 		// store additional required by QR decomposition data 
@@ -208,7 +188,7 @@ void dense_matrix< T >::QR_decomposition()
 		{
 			vTA[ c ] = T{};
 			for( size_t r{ step }; r < m_rows; ++r )
-				vTA[ c ] += conj_if_complex( v[ r ] ) * m_matrix[ r ][ c ];
+				vTA[ c ] += conjugate( v[ r ] ) * m_matrix[ r ][ c ];
 		}
 
 		for( size_t c{ step + 1 }; c < m_cols; ++c )
@@ -235,9 +215,9 @@ void dense_matrix< T >::solve_QR( std::vector< T >& x, const std::vector< T >& b
 	x = b;
 	for( size_t step{ 0 }; step < max_steps; ++step )
 	{
-		T vTb{ conj_if_complex( m_v_firsts[ step ] ) * x[ step ] };
+		T vTb{ conjugate( m_v_firsts[ step ] ) * x[ step ] };
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTb += conj_if_complex( m_matrix[ r ][ step ] ) * x[ r ];
+			vTb += conjugate( m_matrix[ r ][ step ] ) * x[ r ];
 
 		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
