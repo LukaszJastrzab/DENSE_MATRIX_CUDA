@@ -29,9 +29,17 @@ TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 	auto A_ = A;
 
 	A.QR_decomposition();
+
+	// stadard QR solve
+	// ================
 	A.solve_QR( x, b );
 	A_.count_residual_vector( x, b, r );
+	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 
+	// blocked QR solve
+	// ================
+	A.solve_QR_blocked( x, b, 8 );
+	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }
 
@@ -57,8 +65,16 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 	auto A_ = A;
 
 	A.QR_decomposition();
+
+	// stadard QR solve
+	// ================
 	A.solve_QR( x, b );
 	A_.count_residual_vector( x, b, r );
+	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 
+	// blocked QR solve
+	// ================
+	A.solve_QR_blocked( x, b, 8 );
+	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }

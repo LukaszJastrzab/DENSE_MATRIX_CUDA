@@ -42,6 +42,12 @@ public:
 	void QR_decomposition();
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
 	void solve_QR( std::vector< T >& x, const std::vector< T >& b ) const;
+	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
+	void solve_QR_blocked( std::vector< T >& x, const std::vector< T >& b, const size_t block_size ) const;
+
+private:
+	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
+	void create_QR_triangular_factor_T( std::vector< std::vector< T > >& Tmx, const size_t step, const size_t step_offset ) const;
 
 
 
@@ -319,6 +325,99 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
 			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_cols ) ] * vTb;
+	}
+
+	// then solve Rx = Q^T * b by back substitution
+	// ============================================
+	for( auto r = static_cast< int >( m_cols ) - 1; r >= 0; --r )
+	{
+		T sum{ T{} };
+		for( int c{ r + 1 }; c < m_cols; ++c )
+			sum += m_matrix[ calc_elem_idx( r, c, m_cols ) ] * x[ c ];
+
+		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_cols ) ];
+	}
+}
+
+
+template< typename T >
+void dense_matrix_cuda< T >::create_QR_triangular_factor_T( std::vector< std::vector< T > >& Tmx, const size_t step, const size_t step_offset ) const
+{
+	const auto lstep = step_offset + step;
+
+	if( lstep >= m_betas.size() )
+		throw std::out_of_range( "dense_matrix_cuda< T >::create_QR_triangular_factor_T - lstep >= m_betas.size()" );
+
+	Tmx[ step ][ step ] = m_betas[ lstep ];
+
+	if( step > 0 )
+	{
+		std::vector< T > VTv( step );
+		for( size_t s{ step_offset }; s < lstep; ++s )
+		{
+			auto s_in{ s - step_offset };
+			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx( lstep, s, m_cols ) ] ) * m_v_firsts[ lstep ];
+			for( size_t r{ lstep + 1 }; r < m_rows; ++r )
+				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx( r, s, m_cols ) ] ) * m_matrix[ calc_elem_idx( r, lstep, m_cols ) ];
+		}
+
+		for( size_t sr{ 0 }; sr < step; ++sr )
+		{
+			for( size_t sc{ 0 }; sc < step; ++sc )
+				Tmx[ sr ][ step ] -= Tmx[ sr ][ sc ] * VTv[ sc ];
+
+			Tmx[ sr ][ step ] *= m_betas[ lstep ];
+		}
+	}
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::vector< T >& b, const size_t block_size ) const
+{
+	if( b.size() != m_rows )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR_blocked - b.size() != m_rows" );
+
+	auto max_steps{ std::min( m_rows - 1, m_cols ) };
+	size_t step_offset{ 0 };
+
+	x = b;
+	while( step_offset < max_steps )
+	{
+		auto b_size{ std::min( block_size, max_steps - step_offset ) };
+		auto b_end{ step_offset + b_size };
+
+		std::vector< T > VTb( b_size, T{} );
+		for( size_t step{ 0 }; step < b_size; ++step )
+		{
+			const auto lstep{ step_offset + step };
+			VTb[ step ] += conjugate( m_v_firsts[ lstep ] ) * x[ lstep ];
+			for( size_t r{ lstep + 1 }; r < m_rows; ++r )
+				VTb[ step ] += conjugate( m_matrix[ calc_elem_idx( r, lstep, m_cols ) ] ) * x[ r ];
+		}
+
+		std::vector< std::vector < T > > Tmx( b_size, std::vector< T >( b_size, T{} ) );
+
+		for( size_t s{ 0 }; s < b_size; ++s )
+			create_QR_triangular_factor_T( Tmx, s, step_offset );
+
+		std::vector< T > TVTb( b_size, T{} );
+
+		for( size_t r{ 0 }; r < b_size; ++r )
+			for( size_t s{ 0 }; s < b_size; ++s )
+				TVTb[ r ] += conjugate( Tmx[ s ][ r ] ) * VTb[ s ];
+
+		for( size_t r{ step_offset }; r < m_rows; ++r )
+		{
+			size_t s_in{ 0 };
+			size_t s{ step_offset };
+			for( ; s < std::min( b_end, r ); ++s )
+				x[ r ] -= m_matrix[ calc_elem_idx( r, s, m_cols ) ] * TVTb[ s_in++ ];
+
+			if( s == r && s < b_end )
+				x[ r ] -= m_v_firsts[ s ] * TVTb[ s_in ];
+		}
+
+		step_offset += b_size;
 	}
 
 	// then solve Rx = Q^T * b by back substitution
