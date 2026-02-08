@@ -3,7 +3,7 @@
 #include <dense_matrix_cuda.cuh>
 #include <functions.cuh>
 
-constexpr size_t MATRIX_ROW_SIZE = 300;
+constexpr size_t MATRIX_ROW_SIZE = 15;
 constexpr size_t MATRIX_COL_SIZE{ MATRIX_ROW_SIZE };
 
 using namespace std;
