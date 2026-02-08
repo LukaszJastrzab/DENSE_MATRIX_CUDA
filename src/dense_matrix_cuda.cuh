@@ -47,7 +47,7 @@ public:
 
 private:
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
-	void create_QR_triangular_factor_T( std::vector< std::vector< T > >& Tmx, const size_t step, const size_t step_offset ) const;
+	void create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const;
 
 
 
@@ -341,14 +341,14 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 
 
 template< typename T >
-void dense_matrix_cuda< T >::create_QR_triangular_factor_T( std::vector< std::vector< T > >& Tmx, const size_t step, const size_t step_offset ) const
+void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const
 {
 	const auto lstep = step_offset + step;
 
 	if( lstep >= m_betas.size() )
 		throw std::out_of_range( "dense_matrix_cuda< T >::create_QR_triangular_factor_T - lstep >= m_betas.size()" );
 
-	Tmx[ step ][ step ] = m_betas[ lstep ];
+	Tmx[ calc_elem_idx( step, step, block_size ) ] = m_betas[ lstep ];
 
 	if( step > 0 )
 	{
@@ -364,9 +364,9 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( std::vector< std::ve
 		for( size_t sr{ 0 }; sr < step; ++sr )
 		{
 			for( size_t sc{ 0 }; sc < step; ++sc )
-				Tmx[ sr ][ step ] -= Tmx[ sr ][ sc ] * VTv[ sc ];
+				Tmx[ calc_elem_idx( sr, step, block_size ) ] -= Tmx[ calc_elem_idx( sr, sc, block_size ) ] * VTv[ sc ];
 
-			Tmx[ sr ][ step ] *= m_betas[ lstep ];
+			Tmx[ calc_elem_idx( sr, step, block_size ) ] *= m_betas[ lstep ];
 		}
 	}
 }
@@ -395,16 +395,16 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 				VTb[ step ] += conjugate( m_matrix[ calc_elem_idx( r, lstep, m_cols ) ] ) * x[ r ];
 		}
 
-		std::vector< std::vector < T > > Tmx( b_size, std::vector< T >( b_size, T{} ) );
+		std::vector < T > Tmx( b_size * b_size, T{} );
 
 		for( size_t s{ 0 }; s < b_size; ++s )
-			create_QR_triangular_factor_T( Tmx, s, step_offset );
+			create_QR_triangular_factor_T( Tmx.data(), b_size, s, step_offset );
 
 		std::vector< T > TVTb( b_size, T{} );
 
 		for( size_t r{ 0 }; r < b_size; ++r )
 			for( size_t s{ 0 }; s < b_size; ++s )
-				TVTb[ r ] += conjugate( Tmx[ s ][ r ] ) * VTb[ s ];
+				TVTb[ r ] += conjugate( Tmx[ calc_elem_idx( s, r, b_size ) ] ) * VTb[ s ];
 
 		for( size_t r{ step_offset }; r < m_rows; ++r )
 		{
