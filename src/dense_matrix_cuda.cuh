@@ -373,24 +373,24 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 
 template< typename T >
 __global__
-void QR_compute_blocked_TVTb( const T* A_in, const T* v_firsts, const int A_rows, const int A_cols, const T* Tmx, T* b, T* TVTb, const int step_offset )
+void QR_compute_blocked_TVTb( const T* A_in, const T* v_firsts, const int A_rows, const int A_cols, const T* Tmx, T* b, T* TVTb, const int step_offset, T* VTb_ )
 {
 	const int tid = threadIdx.x;
 	const int b_size = blockDim.x;
 
-	extern __shared__ unsigned char sdata_raw[];
-	T* VTb = reinterpret_cast< T* >( sdata_raw );
+	//extern __shared__ unsigned char sdata_raw[];
+	//T* VTb = reinterpret_cast< T* >( sdata_raw );
 
 	int lstep{ step_offset + tid };
 
-	VTb[ tid ] = conjugate( v_firsts[ lstep ] ) * b[ lstep ];
+	VTb_[ tid ] = conjugate( v_firsts[ lstep ] ) * b[ lstep ];
 	for( int r{ lstep + 1 }; r < A_rows; ++r )
-		VTb[ tid ] += conjugate( A_in[ calc_elem_idx( r, lstep, A_cols ) ] ) * b[ r ];
+		VTb_[ tid ] += conjugate( A_in[ calc_elem_idx( r, lstep, A_cols ) ] ) * b[ r ];
 
 	__syncthreads();
 
 	for( size_t s{ 0 }; s < b_size; ++s )
-		TVTb[ tid ] += conjugate( Tmx[ calc_elem_idx( s, tid, b_size ) ] ) * VTb[ s ];
+		TVTb[ tid ] += conjugate( Tmx[ calc_elem_idx( s, tid, b_size ) ] ) * VTb_[ s ];
 }
 
 template< typename T >
@@ -439,6 +439,10 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 	cudaMemcpy( d_b, b.data(), b.size() * sizeof( T ), cudaMemcpyHostToDevice );
 	cudaMalloc( &d_TVTb, block_size * sizeof( T ) );
 
+
+	T* VTb_{ nullptr };
+	cudaMalloc( &VTb_, block_size * sizeof( T ) );
+
 	//x = b;
 	while( step_offset < max_steps )
 	{
@@ -450,12 +454,18 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 			create_QR_triangular_factor_T( d_Tmx, b_size, s, step_offset );
 
 		// test
-		//std::vector< T > Tmx( b_size * b_size, T{} );
-		//cudaMemcpy( Tmx.data(), d_Tmx, b_size * b_size * sizeof( T ), cudaMemcpyDeviceToHost );
-		//Tmx.clear();
+		std::vector< T > Tmx( b_size * b_size, T{} );
+		cudaMemcpy( Tmx.data(), d_Tmx, b_size * b_size * sizeof( T ), cudaMemcpyDeviceToHost );
+		Tmx.clear();
 		// test
 
-		QR_compute_blocked_TVTb <<< dim3( 1 ), dim3( b_size), b_size * sizeof( T ) >>> ( d_matrix_in, d_v_firsts, m_rows, m_cols, d_Tmx, d_b, d_TVTb, step_offset );
+		QR_compute_blocked_TVTb <<< dim3( 1 ), dim3( b_size), b_size * sizeof( T ) >>> ( d_matrix_in, d_v_firsts, m_rows, m_cols, d_Tmx, d_b, d_TVTb, step_offset, VTb_ );
+
+		// test
+		std::vector< T > VTb( b_size );
+		cudaMemcpy( VTb.data(), VTb_, b_size * sizeof( T ), cudaMemcpyDeviceToHost );
+		VTb.clear(); // jest ok
+		// test
 
 		// test
 		std::vector< T > TVTb( b_size );
@@ -498,6 +508,8 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 
 		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_cols ) ];
 	}
+
+	cudaFree( VTb_ ); // test
 
 	cudaFree( d_matrix_in );
 	cudaFree( d_v_firsts );
