@@ -3,7 +3,7 @@
 #include <dense_matrix_cuda.cuh>
 #include <functions.cuh>
 
-constexpr size_t MATRIX_ROW_SIZE = 15;
+constexpr size_t MATRIX_ROW_SIZE = 300;
 constexpr size_t MATRIX_COL_SIZE{ MATRIX_ROW_SIZE };
 
 using namespace std;
@@ -38,7 +38,7 @@ TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 
 	// blocked QR solve
 	// ================
-	A.solve_QR_blocked( x, b, 8 );
+	A.solve_QR_blocked( x, b, 32 );
 	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }
@@ -74,7 +74,7 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 
 	// blocked QR solve
 	// ================
-	A.solve_QR_blocked( x, b, 8 );
+	A.solve_QR_blocked( x, b, 32 );
 	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }
