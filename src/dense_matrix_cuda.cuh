@@ -457,12 +457,14 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 
 		QR_compute_blocked_TVTb <<< dim3( 1 ), dim3( b_size), b_size * sizeof( T ) >>> ( d_matrix_in, d_v_firsts, m_rows, m_cols, d_Tmx, d_b, d_TVTb, step_offset );
 
+		// test
+		std::vector< T > TVTb( b_size );
+		cudaMemcpy( TVTb.data(), d_TVTb, b_size * sizeof( T ), cudaMemcpyDeviceToHost );
+		TVTb.clear(); // jest ok
+		// test
+
 		QR_compute_blocked_VTVTb <<< div_up( m_rows - step_offset, b_size ), dim3( b_size ) >>> ( d_matrix_in, d_v_firsts, m_rows, m_cols, d_b, d_TVTb, step_offset );
-		// test
-		//std::vector< T > TVTb( b_size );
-		//cudaMemcpy( TVTb.data(), d_TVTb, b_size * sizeof( T ), cudaMemcpyDeviceToHost );
-		//TVTb.clear(); // jest ok
-		// test
+
 
 		//for( size_t r{ step_offset }; r < m_rows; ++r )
 		//{
