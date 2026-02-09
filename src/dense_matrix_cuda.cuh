@@ -493,3 +493,24 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 //	d_x,
 //	1
 //);
+
+
+//cudaMemcpy2D(
+//	d_A,                       // dst
+//	100 * sizeof( double ),      // dst pitch (pe³ny wiersz)
+//	A,                         // src
+//	100 * sizeof( double ),      // src pitch
+//	10 * sizeof( double ),       // szerokoœæ kopiowana (kolumny)
+//	100,                       // wysokoœæ (wiersze)
+//	cudaMemcpyHostToDevice
+//);
+
+//cudaMemcpy2D(
+//	/* dst */ A + 10,                  // CPU: start od kolumny 10
+//	/* dpitch */ 100 * sizeof( double ), // pe³ny wiersz CPU
+//	/* src */ d_A + 10,                // GPU: kolumna 10
+//	/* spitch */ 100 * sizeof( double ), // pe³ny wiersz GPU
+//	/* width */ 90 * sizeof( double ),   // kopiujemy 90 kolumn
+//	/* height */ 100,                  // 100 wierszy
+//	cudaMemcpyDeviceToHost
+//);
