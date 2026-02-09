@@ -9,6 +9,7 @@
 
 #include "utilities.cuh"
 
+
 template< typename T >
 class dense_matrix_cuda
 {
@@ -108,7 +109,7 @@ void dense_matrix_cuda< T >::init( size_t rows, size_t cols )
 template< typename T >
 void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 {
-	auto elem_idx = calc_elem_idx( row, col, m_cols );
+	auto elem_idx = calc_elem_idx( row, col, m_rows );
 
 	if( elem_idx >= m_matrix.size() )
 		throw std::out_of_range( "dense_matrix_cuda< T >::set_element - elem_idx >= m_matrix.size()" );
@@ -133,7 +134,7 @@ void QR_first_step( T* A_in, T* A_out, T* betas, T* v_firsts, const int A_rows, 
 	int row = step + tid;
 	while( row < A_rows )
 	{
-		size_t a_idx = calc_elem_idx( row, step, A_cols );
+		size_t a_idx = calc_elem_idx( row, step, A_rows );
 		T a_rs = A_in[ a_idx ];
 		sum += norm2( a_rs );
 		vTv_sum += conjugate( a_rs ) * a_rs;
@@ -158,7 +159,7 @@ void QR_first_step( T* A_in, T* A_out, T* betas, T* v_firsts, const int A_rows, 
 
 	if( tid == 0 )
 	{
-		size_t a_idx = calc_elem_idx( step, step, A_cols );
+		size_t a_idx = calc_elem_idx( step, step, A_rows );
 		T a_ss = A_in[ a_idx ];
 		double alpha_abs = abs_val( a_ss );
 		T sign = ( alpha_abs != 0.0 ? -( a_ss ) / T( alpha_abs ) : T{ -1 } );
@@ -186,10 +187,10 @@ void QR_compute_vTA( const T* A_in, T* vTA, const T* v_firsts, const int A_rows,
 	if( col >= A_cols )
 		return;
 
-	T sum{ conjugate( v_firsts[ step ] ) * A_in[ calc_elem_idx( step, col, A_cols ) ] };
+	T sum{ conjugate( v_firsts[ step ] ) * A_in[ calc_elem_idx( step, col, A_rows ) ] };
 
 	for( int s = step + 1; s < A_rows; ++s )
-		sum += conjugate( A_in[ calc_elem_idx( s, step, A_cols ) ] ) * A_in[ calc_elem_idx( s, col, A_cols ) ];
+		sum += conjugate( A_in[ calc_elem_idx( s, step, A_rows ) ] ) * A_in[ calc_elem_idx( s, col, A_rows ) ];
 
 	vTA[ col ] = sum;
 }
@@ -207,14 +208,14 @@ void QR_compute_reflections( const T* A_in, T* A_out, const T* vTA, const T* bet
 	T beta = betas[ step ];
 	T vta = vTA[ col ];
 
-	int a_idx = calc_elem_idx( row, col, A_cols );
+	int a_idx = calc_elem_idx( row, col, A_rows );
 
 	if( row < step || col <= step )
 		A_out[ a_idx ] = A_in[ a_idx ];
 	else
 	{
 		if( row > step )
-			A_out[ a_idx ] = A_in[ a_idx ] - beta * A_in[ calc_elem_idx( row, step, A_cols ) ] * vta;
+			A_out[ a_idx ] = A_in[ a_idx ] - beta * A_in[ calc_elem_idx( row, step, A_rows ) ] * vta;
 		else
 			A_out[ a_idx ] = A_in[ a_idx ] - beta * v_firsts[ step ] * vta;
 	}
@@ -298,7 +299,7 @@ void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, c
 			r[ row ] = -b[ row ];
 		for( size_t row{ 0 }; row < m_rows; ++row )
 			for( size_t col{ 0 }; col < m_cols; ++col )
-				r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col, m_cols ) ] );
+				r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col, m_rows ) ] );
 		break;
 
 	default:
@@ -325,11 +326,11 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 	{
 		T vTb{ conjugate( m_v_firsts[ step ] ) * x[ step ] };
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTb += conjugate( m_matrix[ calc_elem_idx( r, step, m_cols ) ] ) * x[ r ];
+			vTb += conjugate( m_matrix[ calc_elem_idx( r, step, m_rows ) ] ) * x[ r ];
 
 		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_cols ) ] * vTb;
+			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_rows ) ] * vTb;
 	}
 
 	// then solve Rx = Q^T * b by back substitution
@@ -338,9 +339,9 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 	{
 		T sum{ T{} };
 		for( int c{ r + 1 }; c < m_cols; ++c )
-			sum += m_matrix[ calc_elem_idx( r, c, m_cols ) ] * x[ c ];
+			sum += m_matrix[ calc_elem_idx( r, c, m_rows ) ] * x[ c ];
 
-		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_cols ) ];
+		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_rows ) ];
 	}
 }
 
@@ -361,9 +362,9 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 		for( size_t s{ step_offset }; s < lstep; ++s )
 		{
 			auto s_in{ s - step_offset };
-			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx( lstep, s, m_cols ) ] ) * m_v_firsts[ lstep ];
+			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx( lstep, s, m_rows ) ] ) * m_v_firsts[ lstep ];
 			for( size_t r{ lstep + 1 }; r < m_rows; ++r )
-				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx( r, s, m_cols ) ] ) * m_matrix[ calc_elem_idx( r, lstep, m_cols ) ];
+				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx( r, s, m_rows ) ] ) * m_matrix[ calc_elem_idx( r, lstep, m_rows ) ];
 		}
 
 		for( size_t sr{ 0 }; sr < step; ++sr )
@@ -390,7 +391,7 @@ void QR_compute_blocked_TVTb( const T* A_in, const T* v_firsts, const int A_rows
 
 	VTb[ tid ] = conjugate( v_firsts[ lstep ] ) * b[ lstep ];
 	for( int r{ lstep + 1 }; r < A_rows; ++r )
-		VTb[ tid ] += conjugate( A_in[ calc_elem_idx( r, lstep, A_cols ) ] ) * b[ r ];
+		VTb[ tid ] += conjugate( A_in[ calc_elem_idx( r, lstep, A_rows ) ] ) * b[ r ];
 
 	__syncthreads();
 
@@ -414,7 +415,7 @@ void QR_compute_blocked_VTVTb( const T* A_in, const T* v_firsts, const int A_row
 	int col{ step_offset };
 
 	for( ; col < col_end; ++col )
-		b[ row ] -= A_in[ calc_elem_idx( row, col, A_cols ) ] * TVTb[ row_in++ ];
+		b[ row ] -= A_in[ calc_elem_idx( row, col, A_rows ) ] * TVTb[ row_in++ ];
 
 	if( col == row && col < block_end )
 		b[ row ] -= v_firsts[ col ] * TVTb[ row_in ];
@@ -454,45 +455,30 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 		step_offset += b_size;
 	}
 
+	cublasHandle_t handle;
+	cublasCreate( &handle );
+
+	auto quare_size = std::min( m_rows, m_cols );
+	CublasTrsv<T>::call(
+		handle,
+		CUBLAS_FILL_MODE_UPPER,
+		CUBLAS_OP_N,
+		CUBLAS_DIAG_NON_UNIT,
+		quare_size,
+		m_d_matrix,
+		m_cols,
+		d_b,
+		1
+	);
+
 	x.resize( b.size() );
 	cudaMemcpy( x.data(), d_b, b.size() * sizeof( T ), cudaMemcpyDeviceToHost );
-
-	// then solve Rx = Q^T * b by back substitution
-	// ============================================
-	for( auto r = static_cast< int >( m_cols ) - 1; r >= 0; --r )
-	{
-		T sum{ T{} };
-		for( int c{ r + 1 }; c < m_cols; ++c )
-			sum += m_matrix[ calc_elem_idx( r, c, m_cols ) ] * x[ c ];
-
-		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_cols ) ];
-	}
 
 	cudaFree( d_Tmx );
 	cudaFree( d_b );
 	cudaFree( d_TVTb );
 }
 
-
-//cublasHandle_t handle;
-//cublasCreate( &handle );
-//
-//T* d_x{ nullptr };
-//cudaMalloc( d_x, b.size() * sizeof( T ) );
-//cudaMemxpy( d_x, b.data(), b.size() );
-//
-//auto quare_size = std::min( m_rows, m_cols );
-//cublasDtrsv(
-//	handle,
-//	CUBLAS_FILL_MODE_UPPER,
-//	CUBLAS_OP_N,
-//	CUBLAS_DIAG_NON_UNIT,
-//	quare_size,
-//	m_d_matrix,
-//	m_rows,
-//	d_x,
-//	1
-//);
 
 
 //cudaMemcpy2D(

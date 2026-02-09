@@ -4,6 +4,7 @@
 
 #ifdef __CUDACC__
 #include <thrust/complex.h>
+#include <cublas_v2.h>
 #endif
 
 #ifdef __CUDACC__
@@ -21,9 +22,11 @@ __host__ __device__ __forceinline__
 #else
 inline
 #endif
-size_t calc_elem_idx( size_t row, size_t col, size_t A_cols )
+size_t calc_elem_idx( size_t row, size_t col, size_t rows )
 {
-	return col + row * A_cols;
+    // column majority
+	return row + col * rows;
+
 }
 
 template< typename T >
@@ -133,5 +136,88 @@ thrust::complex< T > conjugate( const thrust::complex< T >& x )
 {
 	return thrust::conj( x );
 }
+
+template<typename T>
+struct CublasTrsv;
+
+template<>
+struct CublasTrsv<float>
+{
+    static cublasStatus_t call(
+        cublasHandle_t handle,
+        cublasFillMode_t uplo,
+        cublasOperation_t trans,
+        cublasDiagType_t diag,
+        int n,
+        const float* A,
+        int lda,
+        float* x,
+        int incx
+    )
+    {
+        return cublasStrsv( handle, uplo, trans, diag, n, A, lda, x, incx );
+    }
+};
+
+template<>
+struct CublasTrsv<double>
+{
+    static cublasStatus_t call(
+        cublasHandle_t handle,
+        cublasFillMode_t uplo,
+        cublasOperation_t trans,
+        cublasDiagType_t diag,
+        int n,
+        const double* A,
+        int lda,
+        double* x,
+        int incx
+    )
+    {
+        return cublasDtrsv( handle, uplo, trans, diag, n, A, lda, x, incx );
+    }
+};
+
+template<>
+struct CublasTrsv<thrust::complex<float>>
+{
+    static cublasStatus_t call(
+        cublasHandle_t handle,
+        cublasFillMode_t uplo,
+        cublasOperation_t trans,
+        cublasDiagType_t diag,
+        int n,
+        const thrust::complex<float>* A,
+        int lda,
+        thrust::complex<float>* x,
+        int incx
+    )
+    {
+        return cublasCtrsv( handle, uplo, trans, diag, n,
+            reinterpret_cast< const cuComplex* >( A ), lda,
+            reinterpret_cast< cuComplex* >( x ), incx );
+    }
+};
+
+template<>
+struct CublasTrsv<thrust::complex<double>>
+{
+    static cublasStatus_t call(
+        cublasHandle_t handle,
+        cublasFillMode_t uplo,
+        cublasOperation_t trans,
+        cublasDiagType_t diag,
+        int n,
+        const thrust::complex<double>* A,
+        int lda,
+        thrust::complex<double>* x,
+        int incx
+    )
+    {
+        return cublasZtrsv( handle, uplo, trans, diag, n,
+            reinterpret_cast< const cuDoubleComplex* >( A ), lda,
+            reinterpret_cast< cuDoubleComplex* >( x ), incx );
+    }
+};
 
 #endif

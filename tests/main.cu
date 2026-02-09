@@ -78,3 +78,4 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }
+
