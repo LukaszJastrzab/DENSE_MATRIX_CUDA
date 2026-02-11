@@ -79,6 +79,7 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }
 
+
 TEST( non_singular_linear_equation_real, QR_decomposition_blocked_Householder )
 {
 	dense_matrix_cuda< double > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
