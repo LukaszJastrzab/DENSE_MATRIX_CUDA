@@ -41,6 +41,8 @@ public:
 
 	/// performs QR decomposition using CUDA data
 	void QR_decomposition();
+	/// performs blocked QR decomposition using CUDA data
+	void QR_decomposition_blocked( const size_t block_size  );
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
 	void solve_QR( std::vector< T >& x, const std::vector< T >& b ) const;
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
@@ -49,7 +51,8 @@ public:
 private:
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
 	void create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const;
-
+	/// decomposes block on cpu
+	void QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset );
 
 
 private:
@@ -500,3 +503,107 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 //	/* height */ 100,                  // 100 wierszy
 //	cudaMemcpyDeviceToHost
 //);
+
+template< typename T >
+void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset )
+{
+	std::vector< T > vTA( block_size, T{} );
+
+	for( size_t step{ step_offset }; step < block_size; ++step )
+	{
+		double col_norm{ 0.0 };
+
+		// calcualte norm
+		// ==============
+		for( size_t r{ step }; r < m_rows; ++r )
+		{
+			double abs_v = abs_val( m_matrix[ calc_elem_idx( r, step, m_rows ) ] );
+			col_norm += abs_v * abs_v;
+		}
+		col_norm = std::sqrt( col_norm );
+
+		// stabilization sign calculation
+		// ==============================
+		const size_t step_idx = calc_elem_idx( step, step, m_rows );
+
+		double alpha_abs = abs_val( m_matrix[ step_idx ] );
+		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ step_idx ] ) / alpha_abs : T{ -1 } );
+		T sign_norm = sign * T{ col_norm };
+
+		m_v_firsts[ step ] = m_matrix[ step_idx ] - sign_norm;
+
+		T vTv{ conjugate( m_v_firsts[ step ] ) * m_v_firsts[ step ] };
+
+		for( size_t r{ step + 1 }; r < m_rows; ++r )
+			vTv += conjugate( m_matrix[ calc_elem_idx( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx( r, step, m_rows ) ];
+
+		m_betas[ step ] = 2.0 / vTv;
+
+		// apply the Householder transformation to the remaining submatrix
+		// only needed operations "in situ"
+		// ===============================================================
+		m_matrix[ step_idx ] = sign_norm;
+
+		// ==============================================================
+		// now we should perform operations A := A - beta( v( vT( A ) ) )
+		// above parathesis shows how this operations should be treated
+		// ==============================================================
+
+		// calculate vTA ( v*A in case of complex )
+		// ========================================
+		for( size_t c{ step + 1 }; c < block_size; ++c )
+		{
+			vTA[ c ] = conjugate( m_v_firsts[ step ] ) * m_matrix[ calc_elem_idx( step, c, m_rows ) ];
+			for( size_t r{ step + 1 }; r < m_rows; ++r )
+				vTA[ c ] += conjugate( m_matrix[ calc_elem_idx( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx( r, c, m_rows ) ];
+		}
+
+		// calculate (I-bvvT)A = A - b(v(vTA)) only for first block_size columns
+		// =====================================================================
+		for( size_t c{ step + 1 }; c < block_size; ++c )
+			m_matrix[ calc_elem_idx( step, c, m_rows ) ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c ];
+
+		for( size_t r{ step + 1 }; r < m_rows; ++r )
+			for( size_t c{ step + 1 }; c < block_size; ++c )
+				m_matrix[ calc_elem_idx( r, c, m_rows ) ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_rows ) ] * vTA[ c ];
+	}
+
+	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
+{
+	if( m_dynamic_state != DYNAMIC_STATE::INIT )
+		throw std::exception( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::INIT" );
+
+	auto max_steps{ std::min( m_rows - 1, m_cols ) };
+	size_t step_offset{ 0 };
+
+	m_betas.resize( max_steps );
+	m_v_firsts.resize( max_steps );	
+
+	while( step_offset < max_steps )
+	{
+		QR_decomposition_blocked_cpu( block_size, step_offset );
+
+		size_t rows_to_copy = m_rows - step_offset;
+
+		cudaMemcpy2D(
+			m_d_matrix + step_offset + step_offset * m_rows,      // dst
+			m_rows * sizeof( T ),                                 // dst pitch
+			m_matrix.data() + step_offset + step_offset * m_rows, // src
+			m_rows * sizeof( T ),                                 // src pitch
+			rows_to_copy * sizeof( T ),                           // width (bytes)
+			block_size,                                           // height (kolumny)
+			cudaMemcpyHostToDevice
+		);
+
+		cudaMemcpy( m_d_betas + step_offset, m_betas.data() + step_offset, block_size * sizeof( T ), cudaMemcpyHostToDevice );
+		cudaMemcpy( m_d_v_firsts + step_offset, m_v_firsts.data() + step_offset, block_size * sizeof( T ), cudaMemcpyHostToDevice );
+
+		step_offset += block_size;
+	}
+
+	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
+}

@@ -135,12 +135,11 @@ void dense_matrix< T >::QR_decomposition()
 	m_betas.resize( max_steps, T{} );
 	m_v_firsts.resize( max_steps, T{} );
 
-	std::vector< T > v( m_rows, T{} );
 	std::vector< T > vTA( m_cols, T{} );
 
 	for( size_t step{ 0 }; step < max_steps; ++step )
 	{
-		T col_norm{ 0.0 };
+		double col_norm{ 0.0 };
 
 		// calcualte norm
 		// ==============
@@ -149,28 +148,25 @@ void dense_matrix< T >::QR_decomposition()
 			double abs_val = std::abs( m_matrix[ r ][ step ] );
 			col_norm += abs_val * abs_val;
 		}
-
 		col_norm = std::sqrt( col_norm );
 
 		// stabilization sign calculation
 		// ==============================
 		double alpha_abs = std::abs( m_matrix[ step ][ step ] );
 		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ step ][ step ] ) / alpha_abs : T{ -1 } );
-		T sign_norm = sign * col_norm;
+		T sign_norm = sign * T{ col_norm };
 
-		v[ step ] = m_matrix[ step ][ step ] - sign_norm;
-		T vTv{ conjugate( v[ step ] ) * v[ step ] };
+		m_v_firsts[ step ] = m_matrix[ step ][ step ] - sign_norm;
+
+		T vTv{ conjugate( m_v_firsts[ step ] ) * m_v_firsts[ step ] };
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-		{
-			v[ r ] = m_matrix[ r ][ step ];
-			vTv += conjugate( v[ r ] ) * v[ r ];
-		}
+			vTv += conjugate( m_matrix[ r ][ step ] ) * m_matrix[ r ][ step ];
 
 		// store additional required by QR decomposition data 
 		// ==================================================
 		m_betas[ step ] = 2.0 / vTv;
-		m_v_firsts[ step ] = v[ step ];
+
 
 		// apply the Householder transformation to the remaining submatrix
 		// only needed operations "in situ"
@@ -186,14 +182,19 @@ void dense_matrix< T >::QR_decomposition()
 		// ========================================
 		for( size_t c{ step + 1 }; c < m_cols; ++c )
 		{
-			vTA[ c ] = T{};
-			for( size_t r{ step }; r < m_rows; ++r )
-				vTA[ c ] += conjugate( v[ r ] ) * m_matrix[ r ][ c ];
+			vTA[ c ] = conjugate( m_v_firsts[ step ] ) * m_matrix[ step ][ c ];
+			for( size_t r{ step + 1 }; r < m_rows; ++r )
+				vTA[ c ] += conjugate( m_matrix[ r ][ step ] ) * m_matrix[ r ][ c ];
 		}
 
+		// calculate (I-bvvT)A = A - b(v(vTA))
+		// ===================================
 		for( size_t c{ step + 1 }; c < m_cols; ++c )
-			for( size_t r{ step }; r < m_rows; ++r )
-				m_matrix[ r ][ c ] -= m_betas[ step ] * v[ r ] * vTA[ c ];
+			m_matrix[ step ][ c ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c ];
+
+		for( size_t r{ step + 1 }; r < m_rows; ++r )
+			for( size_t c{ step + 1 }; c < m_cols; ++c )
+				m_matrix[ r ][ c ] -= m_betas[ step ] * m_matrix[ r ][ step ] * vTA[ c ];
 	}
 
 	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
