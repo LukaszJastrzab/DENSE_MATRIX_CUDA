@@ -52,7 +52,7 @@ private:
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
 	void create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const;
 	/// decomposes block on cpu
-	void QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset );
+	void QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps );
 
 
 private:
@@ -505,13 +505,17 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 //);
 
 template< typename T >
-void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset )
+void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps )
 {
-	std::vector< T > vTA( block_size, T{} );
+	//std::vector< T > vTA( block_size, T{} );
 
 	size_t block_end{ block_size + step_offset };
+	size_t l_max_steps{ std::min( max_steps, block_end ) };
+	size_t l_max_col{ std::min( block_end, m_cols ) };
 
-	for( size_t step{ step_offset }; step < block_end; ++step )
+	std::vector< T > vTA( l_max_steps, T{} );
+
+	for( size_t step{ step_offset }; step < l_max_steps; ++step )
 	{
 		double col_norm{ 0.0 };
 
@@ -553,7 +557,7 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_si
 
 		// calculate vTA ( v*A in case of complex )
 		// ========================================
-		for( size_t c{ step + 1 }; c < block_end; ++c )
+		for( size_t c{ step + 1 }; c < l_max_col; ++c )
 		{
 			const size_t c_in{ c - step_offset };
 
@@ -564,11 +568,11 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_si
 
 		// calculate (I-bvvT)A = A - b(v(vTA)) only for first block_size columns
 		// =====================================================================
-		for( size_t c{ step + 1 }; c < block_end; ++c )
+		for( size_t c{ step + 1 }; c < l_max_col; ++c )
 			m_matrix[ calc_elem_idx( step, c, m_rows ) ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c - step_offset ];
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			for( size_t c{ step + 1 }; c < block_end; ++c )
+			for( size_t c{ step + 1 }; c < l_max_col; ++c )
 				m_matrix[ calc_elem_idx( r, c, m_rows ) ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_rows ) ] * vTA[ c - step_offset ];
 	}
 
@@ -630,7 +634,13 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 	if( col >= A_cols || row >= A_rows )
 		return;
 
-	const int t_col = row_offset + threadIdx.x;
+	// test
+	if( col == 3 && row == 1 )
+	{
+		int test = 7;
+	}
+
+	const int t_col = row_offset;// +threadIdx.x;
 	const int t_row = row - row_offset;
 
 	int sum_range = ( block_size < t_row + 1 ? block_size : t_row + 1 );
@@ -644,7 +654,8 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 		sum += v_i * TVTA[ calc_elem_idx( c, col, block_size ) ];
 	}
 
-	A_out[ calc_elem_idx( row, col, A_rows ) ] -= sum;
+	T a_i = A_out[ calc_elem_idx( row, col, A_rows ) ]; // to optimize
+	A_out[ calc_elem_idx( row, col, A_rows ) ] = a_i - sum;
 }
 
 template< typename T >
@@ -672,9 +683,10 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
 
 	while( step_offset < max_steps )
 	{
-		auto b_size{ std::min( block_size, max_steps - step_offset ) };
+		//auto b_size{ std::min( block_size, max_steps - step_offset ) };
+		auto b_size{ block_size };
 
-		QR_decomposition_blocked_cpu( b_size, step_offset );
+		QR_decomposition_blocked_cpu( b_size, step_offset, max_steps );
 
 		size_t rows_to_copy = m_rows - row_offset;
 		size_t cols_to_copy = b_size;
@@ -691,14 +703,17 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
 
 		cudaMemcpy( m_d_v_firsts + step_offset, m_v_firsts.data() + step_offset, b_size * sizeof( T ), cudaMemcpyHostToDevice );
 
+		if( step_offset + b_size >= m_cols )
+			break;
+
 		cudaMemset( d_Tmx, 0, b_size * b_size * sizeof( T ) );
 		for( size_t s{ 0 }; s < b_size; ++s )
 			create_QR_triangular_factor_T( d_Tmx, b_size, s, step_offset );
 
 		// test
-		//std::vector< T > TMX( block_size * block_size, T{} );
-		//cudaMemcpy( TMX.data(), d_Tmx, block_size * block_size * sizeof( T ), cudaMemcpyDeviceToHost );
-		//TMX.clear();
+		std::vector< T > TMX( block_size * block_size, T{} );
+		cudaMemcpy( TMX.data(), d_Tmx, block_size * block_size * sizeof( T ), cudaMemcpyDeviceToHost );
+		TMX.clear();
 		// test
 
 		step_offset += b_size;
@@ -709,9 +724,9 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
 
 
 		// test
-		//std::vector< T > vTVTA( block_size * m_cols, T{} );
-		//cudaMemcpy( vTVTA.data(), d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
-		//vTVTA.clear();
+		std::vector< T > vTVTA( block_size * m_cols, T{} );
+		cudaMemcpy( vTVTA.data(), d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
+		vTVTA.clear();
 		// test
 
 

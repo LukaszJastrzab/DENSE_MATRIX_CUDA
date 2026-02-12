@@ -104,17 +104,6 @@ TEST( non_singular_linear_equation_real, QR_decomposition_blocked_Householder )
 		}
 	}
 
-	//b[ 0 ] = 1.0; b[ 1 ] = 2.0; b[ 2 ] = 3.0;
-	//A.set_element( 1.0, 0, 0 ); AA.set_element( 1.0, 0, 0 );
-	//A.set_element( 2.0, 0, 1 ); AA.set_element( 2.0, 0, 1 );
-	//A.set_element( 0.0, 0, 2 ); AA.set_element( 0.0, 0, 2 );
-	//A.set_element( 3.0, 1, 0 ); AA.set_element( 3.0, 1, 0 );
-	//A.set_element( -2.0, 1, 1 ); AA.set_element( -2.0, 1, 1 );
-	//A.set_element( 1.0, 1, 2 ); AA.set_element( 1.0, 1, 2 );
-	//A.set_element( 4.0, 2, 0 ); AA.set_element( 4.0, 2, 0 );
-	//A.set_element( 2.0, 2, 1 ); AA.set_element( 2.0, 2, 1 );
-	//A.set_element( -1.0, 2, 2 ); AA.set_element( -1.0, 2, 2 );
-
 	auto A_ = A;
 
 	//A_.QR_decomposition();
@@ -123,7 +112,9 @@ TEST( non_singular_linear_equation_real, QR_decomposition_blocked_Householder )
 
 	// blocked QR solve
 	// ================
-	A.solve_QR_blocked( x, b, 32 );
+	AA.solve_QR( x, b );
+	A.solve_QR( x, b );
+	A.solve_QR_blocked( x, b, 2 );
 	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 	EXPECT_TRUE( true );
@@ -153,11 +144,11 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_blocked_Householder
 	auto A_ = A;
 
 	AA.QR_decomposition();
-	A.QR_decomposition_blocked( 32 );
+	A.QR_decomposition_blocked( 2 );
 
 	// blocked QR solve
 	// ================
-	A.solve_QR_blocked( x, b, 32 );
+	A.solve_QR_blocked( x, b, 2 );
 	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 	EXPECT_TRUE( true );
