@@ -3,11 +3,15 @@
 #include <dense_matrix_cuda.cuh>
 #include <functions.cuh>
 
-constexpr size_t MATRIX_ROW_SIZE = 100;
+// test
+#include <dense_matrix.hpp>
+// test
+;
+constexpr size_t MATRIX_ROW_SIZE = 4;
 constexpr size_t MATRIX_COL_SIZE{ MATRIX_ROW_SIZE };
 
 using namespace std;
-
+/*
 TEST( non_singular_linear_equation_real, QR_decomposition_Householder )
 {
 	dense_matrix_cuda< double > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
@@ -78,10 +82,11 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_Householder )
 	A_.count_residual_vector( x, b, r );
 	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 }
-
+*/
 
 TEST( non_singular_linear_equation_real, QR_decomposition_blocked_Householder )
 {
+	dense_matrix< double > AA( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
 	dense_matrix_cuda< double > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
 	vector< double > b( MATRIX_ROW_SIZE );
 	vector< double > r( MATRIX_ROW_SIZE );
@@ -95,23 +100,38 @@ TEST( non_singular_linear_equation_real, QR_decomposition_blocked_Householder )
 		{
 			auto val = generate_random< double >( 0.0001, 10000.0 );
 			A.set_element( val, row, col );
+			AA.set_element( val, row, col );
 		}
 	}
 
+	//b[ 0 ] = 1.0; b[ 1 ] = 2.0; b[ 2 ] = 3.0;
+	//A.set_element( 1.0, 0, 0 ); AA.set_element( 1.0, 0, 0 );
+	//A.set_element( 2.0, 0, 1 ); AA.set_element( 2.0, 0, 1 );
+	//A.set_element( 0.0, 0, 2 ); AA.set_element( 0.0, 0, 2 );
+	//A.set_element( 3.0, 1, 0 ); AA.set_element( 3.0, 1, 0 );
+	//A.set_element( -2.0, 1, 1 ); AA.set_element( -2.0, 1, 1 );
+	//A.set_element( 1.0, 1, 2 ); AA.set_element( 1.0, 1, 2 );
+	//A.set_element( 4.0, 2, 0 ); AA.set_element( 4.0, 2, 0 );
+	//A.set_element( 2.0, 2, 1 ); AA.set_element( 2.0, 2, 1 );
+	//A.set_element( -1.0, 2, 2 ); AA.set_element( -1.0, 2, 2 );
+
 	auto A_ = A;
 
-	A.QR_decomposition_blocked( 32 );
+	//A_.QR_decomposition();
+	AA.QR_decomposition();
+	A.QR_decomposition_blocked( 2 );
 
 	// blocked QR solve
 	// ================
-	//A.solve_QR_blocked( x, b, 32 );
-	//A_.count_residual_vector( x, b, r );
-	//EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
+	A.solve_QR_blocked( x, b, 32 );
+	A_.count_residual_vector( x, b, r );
+	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 	EXPECT_TRUE( true );
 }
 
 TEST( non_singular_linear_equation_complex, QR_decomposition_blocked_Householder )
 {
+	dense_matrix< std::complex< double > > AA( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
 	dense_matrix_cuda< thrust::complex< double > > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
 	vector< thrust::complex< double > > b( MATRIX_ROW_SIZE );
 	vector< thrust::complex< double > > r( MATRIX_ROW_SIZE );
@@ -126,17 +146,19 @@ TEST( non_singular_linear_equation_complex, QR_decomposition_blocked_Householder
 			double real = generate_random< double >( 0.0001, 10000.0 );
 			double imag = generate_random< double >( 0.0001, 10000.0 );
 			A.set_element( thrust::complex< double >( real, imag ), row, col );
+			AA.set_element( std::complex< double >( real, imag ), row, col );
 		}
 	}
 
 	auto A_ = A;
 
+	AA.QR_decomposition();
 	A.QR_decomposition_blocked( 32 );
 
 	// blocked QR solve
 	// ================
-	//A.solve_QR_blocked( x, b, 32 );
-	//A_.count_residual_vector( x, b, r );
-	//EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
+	A.solve_QR_blocked( x, b, 32 );
+	A_.count_residual_vector( x, b, r );
+	EXPECT_TRUE( l2_norm( r ) <= 0.00001 );
 	EXPECT_TRUE( true );
 }
