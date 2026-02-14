@@ -455,6 +455,8 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 		for( size_t s{ 0 }; s < b_size; ++s )
 			create_QR_triangular_factor_T( d_Tmx, b_size, s, step_offset );
 
+		cudaDeviceSynchronize(); // Tmx should be optimized
+
 		QR_compute_blocked_TVTb << < dim3( 1 ), dim3( b_size ), b_size * sizeof( T ) >> > ( m_d_matrix, m_d_v_firsts, m_rows, m_cols, d_Tmx, d_b, d_TVTb, step_offset );
 
 		QR_compute_blocked_VTVTb << < div_up( m_rows - step_offset, b_size ), dim3( b_size ) >> > ( m_d_matrix, m_d_v_firsts, m_rows, m_cols, d_b, d_TVTb, step_offset );
@@ -564,27 +566,32 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 {
 	const int col = col_offset + threadIdx.x + blockDim.x * blockIdx.x;
 	const int row = row_offset + threadIdx.y;
+	T sum{};
 
-	if( col >= A_cols || row >= row_offset + block_size  )
-		return;
+	bool active = !( col >= A_cols || row >= row_offset + block_size );
 
-	const int t_row = threadIdx.y;
+	if( active )
+	{
+		sum = conjugate( v_firsts[ row ] ) * A_in[ calc_elem_idx( row, col, A_rows ) ];
+		for( int r{ row + 1 }; r < A_rows; ++r )
+			sum += conjugate( A_in[ calc_elem_idx( r, row, A_rows ) ] ) * A_in[ calc_elem_idx( r, col, A_rows ) ];
 
-	T sum{ conjugate( v_firsts[ row ] ) * A_in[ calc_elem_idx( row, col, A_rows ) ] };
-	for( int r{ row + 1 }; r < A_rows; ++r )
-		sum += conjugate( A_in[ calc_elem_idx( r, row, A_rows ) ] ) * A_in[ calc_elem_idx( r, col, A_rows ) ];
-
-	TVTA[ calc_elem_idx( t_row, col, block_size ) ] = sum;
-
-	__syncthreads();
-
-	sum = conjugate(  Tmx[ calc_elem_idx( 0, t_row, block_size ) ] ) * TVTA[ calc_elem_idx( 0, col, block_size ) ];
-	for( int r{ 1 }; r < block_size; ++r )
-		sum += conjugate( Tmx[ calc_elem_idx( r, t_row, block_size ) ] ) * TVTA[ calc_elem_idx( r, col, block_size ) ];
+		TVTA[ calc_elem_idx( threadIdx.y, col, block_size ) ] = sum;
+	}
 
 	__syncthreads();
 
-	TVTA[ calc_elem_idx( t_row, col, block_size ) ] = sum;
+	if( active )
+	{
+		sum = conjugate( Tmx[ calc_elem_idx( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx( 0, col, block_size ) ];
+		for( int r{ 1 }; r < block_size; ++r )
+			sum += conjugate( Tmx[ calc_elem_idx( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx( r, col, block_size ) ];
+	}
+
+	__syncthreads();
+
+	if ( active )
+		TVTA[ calc_elem_idx( threadIdx.y, col, block_size ) ] = sum;	
 }
 
 template< typename T >
@@ -673,6 +680,8 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
 		cudaMemset( d_Tmx, 0, b_size * b_size * sizeof( T ) );
 		for( size_t s{ 0 }; s < b_size; ++s )
 			create_QR_triangular_factor_T( d_Tmx, b_size, s, step_offset );
+
+		cudaDeviceSynchronize(); // Tmx should be optimized
 
 		step_offset += b_size;
 
