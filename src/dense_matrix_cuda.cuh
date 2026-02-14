@@ -9,7 +9,6 @@
 
 #include "utilities.cuh"
 
-
 template< typename T >
 class dense_matrix_cuda
 {
@@ -44,7 +43,7 @@ public:
 	/// performs blocked QR decomposition using CUDA data
 	void QR_decomposition_blocked( const size_t block_size  );
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
-	void solve_QR( std::vector< T >& x, const std::vector< T >& b ) const;
+	void solve_QR( std::vector< T >& x, const std::vector< T >& b );// const;
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
 	void solve_QR_blocked( std::vector< T >& x, const std::vector< T >& b, const size_t block_size ) const;
 
@@ -312,7 +311,7 @@ void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, c
 
 
 template< typename T >
-void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T >& b ) const
+void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T >& b )// const
 {
 	if( b.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR - b.size() != m_rows" );
@@ -410,11 +409,14 @@ __global__
 void QR_compute_blocked_VTVTb( const T* A_in, const T* v_firsts, const int A_rows, const int A_cols, T* b, const T* TVTb, const int step_offset )
 {
 	const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-	const int block_size = blockDim.x;
+	const int row{ step_offset + tid };
 
-	int row{ step_offset + tid };
-	int block_end = step_offset + block_size;
-	int col_end = block_end < row ? block_end : row;
+	if( row >= A_rows )
+		return;
+
+	const int block_size = blockDim.x;
+	const int block_end = step_offset + block_size;
+	const int col_end = block_end < row ? block_end : row;
 
 	int row_in{ 0 };
 	int col{ step_offset };
@@ -444,8 +446,6 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 	cudaMalloc( &d_b, m_rows * sizeof( T ) );
 	cudaMemcpy( d_b, b.data(), b.size() * sizeof( T ), cudaMemcpyHostToDevice );
 	cudaMalloc( &d_TVTb, block_size * sizeof( T ) );
-
-	auto qb = b;
 
 	while( step_offset < max_steps )
 	{
