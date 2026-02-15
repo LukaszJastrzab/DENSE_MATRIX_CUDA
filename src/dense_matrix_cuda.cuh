@@ -497,6 +497,8 @@ void dense_matrix_cuda< T >::solve_QR_blocked( std::vector< T >& x, const std::v
 template< typename T >
 void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps )
 {
+	using real_t = typename real_type< T >::type;
+
 	size_t block_end{ block_size + step_offset };
 	size_t l_max_steps{ std::min( max_steps, block_end ) };
 	size_t l_max_col{ std::min( block_end, m_cols ) };
@@ -522,7 +524,7 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked_cpu( const size_t block_si
 
 		double alpha_abs = abs_val( m_matrix[ step_idx ] );
 		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ step_idx ] ) / alpha_abs : T{ -1 } );
-		T sign_norm = sign * T{ col_norm };
+		T sign_norm = sign * T{ static_cast< real_t >( col_norm ) };
 
 		m_v_firsts[ step ] = m_matrix[ step_idx ] - sign_norm;
 

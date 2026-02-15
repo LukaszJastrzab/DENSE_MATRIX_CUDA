@@ -1,5 +1,6 @@
 #pragma once
 
+#include <type_traits>
 #include <complex>
 
 #ifdef __CUDACC__
@@ -28,6 +29,18 @@ size_t calc_elem_idx( size_t row, size_t col, size_t rows )
 	return row + col * rows;
 
 }
+
+template< typename T >
+struct real_type
+{
+    using type = T;
+};
+
+template< typename T >
+struct real_type< std::complex< T > >
+{
+    using type = T;
+};
 
 template< typename T >
 #ifdef __CUDACC__
@@ -104,6 +117,12 @@ std::complex< T > conjugate( const std::complex< T >& x )
 
 
 #ifdef __CUDACC__
+
+template< typename T >
+struct real_type< thrust::complex< T > >
+{
+    using type = T;
+};
 
 template< typename T >
 __host__ __device__ __forceinline__
