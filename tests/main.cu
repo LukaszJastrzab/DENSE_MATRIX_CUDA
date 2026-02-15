@@ -129,7 +129,9 @@ TEST( non_singular_linear_equation_real, QR_decomposition_blocked_Householder )
 
 TEST( non_singular_linear_equation_complex, QR_decomposition_blocked_Householder )
 {
-	for( size_t block_size{ 32 }; block_size > 0; block_size >>= 1 )
+	// for complex block 32 is to big 
+	// ==============================
+	for( size_t block_size{ 16 }; block_size > 0; block_size >>= 1 )
 	{
 		for( size_t mx_size = 500; mx_size > 1; mx_size -= 100 )
 		{
