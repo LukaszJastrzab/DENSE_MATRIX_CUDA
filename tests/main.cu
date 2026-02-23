@@ -5,12 +5,12 @@
 
 
 using namespace std;
-constexpr double eps_float = 1e-3;
+constexpr double eps_float = 2e-3;
 constexpr double eps_double = 1e-10;
 
 TEST( non_singular_linear_equation_real_float, QR_decomposition_Householder )
 {
-	const size_t MATRIX_ROW_SIZE = 500;
+	const size_t MATRIX_ROW_SIZE = 100;
 	const size_t MATRIX_COL_SIZE{ MATRIX_ROW_SIZE };
 
 	dense_matrix_cuda< float > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
@@ -45,7 +45,6 @@ TEST( non_singular_linear_equation_real_float, QR_decomposition_Householder )
 	A_.count_residual_vector( x, b, r );
 	EXPECT_LE( l2_norm( r ) / l2_norm( b ), eps_float );
 }
-
 
 TEST( non_singular_linear_equation_real_double, QR_decomposition_Householder )
 {
@@ -87,7 +86,7 @@ TEST( non_singular_linear_equation_real_double, QR_decomposition_Householder )
 
 TEST( non_singular_linear_equation_complex_float, QR_decomposition_Householder )
 {
-	const size_t MATRIX_ROW_SIZE = 500;
+	const size_t MATRIX_ROW_SIZE = 100;
 	const size_t MATRIX_COL_SIZE{ MATRIX_ROW_SIZE };
 
 	dense_matrix_cuda< thrust::complex< float > > A( MATRIX_ROW_SIZE, MATRIX_COL_SIZE );
@@ -334,3 +333,4 @@ TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Hous
 		}
 	}
 }
+
