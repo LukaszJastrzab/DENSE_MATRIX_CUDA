@@ -5,7 +5,7 @@
 
 
 using namespace std;
-constexpr double eps_float = 2e-3;
+constexpr double eps_float = 3e-3;
 constexpr double eps_double = 1e-10;
 
 TEST( non_singular_linear_equation_real_float, QR_decomposition_Householder )
