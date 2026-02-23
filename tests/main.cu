@@ -46,6 +46,7 @@ TEST( non_singular_linear_equation_real_float, QR_decomposition_Householder )
 	EXPECT_LE( l2_norm( r ) / l2_norm( b ), eps_float );
 }
 
+
 TEST( non_singular_linear_equation_real_double, QR_decomposition_Householder )
 {
 	const size_t MATRIX_ROW_SIZE = 500;

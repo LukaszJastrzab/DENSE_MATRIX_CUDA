@@ -648,7 +648,7 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
 	m_v_firsts.resize( max_steps );	
 
 	cudaMalloc( &m_d_matrix, m_matrix.size() * sizeof( T ) );
-	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice ); // to be more optimized
+	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 
 	cudaMalloc( &m_d_betas, max_steps * sizeof( T ) );
 	cudaMalloc( &m_d_v_firsts, max_steps * sizeof( T ) );
@@ -706,16 +706,15 @@ void dense_matrix_cuda< T >::QR_decomposition_blocked( const size_t block_size )
 		dim3 grid2Dim( div_up( m_cols - step_offset, b_size ), div_up( m_rows - row_offset, b_size ) );
 		QR_decomposition_blocked_VTVTA_gpu<<< grid2Dim, blockDim >>>( d_TVTA, m_d_matrix, m_d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset );
 
-		rows_to_copy = m_rows - row_offset;
-		cols_to_copy = m_cols - step_offset;
+		cols_to_copy = std::min( b_size, m_cols - step_offset );
 
 		cudaMemcpy2D(
-			m_matrix.data() + row_offset + step_offset * m_rows,  // dst
-			m_rows * sizeof( T ),                                 // dst pitch
-			m_d_matrix + row_offset + step_offset * m_rows,       // src
-			m_rows * sizeof( T ),                                 // src pitch
-			rows_to_copy * sizeof( T ),                           // width (bytes)
-			cols_to_copy,                                         // height (cols)
+			m_matrix.data() + step_offset * m_rows,  // dst
+			m_rows * sizeof( T ),                    // dst pitch
+			m_d_matrix + step_offset * m_rows,       // src
+			m_rows * sizeof( T ),                    // src pitch
+			m_rows * sizeof( T ),                    // width (bytes)
+			cols_to_copy,                            // height (cols)
 			cudaMemcpyDeviceToHost
 		);
 
