@@ -1,0 +1,2 @@
+solver_QR_bloacked (GPU)  - removed as CPU solves it faster
+QR_decomposition - non-blocked version removed as it is depracated at all
