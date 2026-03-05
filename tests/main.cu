@@ -12,8 +12,16 @@ constexpr double max_double = 10000.0;
 constexpr double min_float = 0.01;
 constexpr double max_float = 100.0;
 
+
+enum class SOLVING_TYPE : uint8_t
+{
+	QR_decomposition,
+	LU_decomposition
+};
+
+
 template < typename T >
-void QR_decomposition_block_test( size_t max_block_size = 32 )
+void QR_decomposition_block_test( const SOLVING_TYPE solving_type, size_t max_block_size = 32 )
 {
 	double val_min{ min_float }, val_max{ max_float }, eps{ eps_float };
 
@@ -49,9 +57,19 @@ void QR_decomposition_block_test( size_t max_block_size = 32 )
 
 			auto A_ = A;
 
-			A.QR_decomposition( block_size );
+			switch( solving_type )
+			{
+			case SOLVING_TYPE::QR_decomposition:
+				A.QR_decomposition( block_size );
+				A.solve_QR( x, b );
+				break;
 
-			A.solve_QR( x, b );
+			case SOLVING_TYPE::LU_decomposition:
+				A.LU_decomposition( block_size );
+				A.solve_LU( x, b );
+				break;
+			}
+
 			A_.count_residual_vector( x, b, r );
 
 			EXPECT_LE( l2_norm( r ) / l2_norm( b ), eps );
@@ -62,21 +80,21 @@ void QR_decomposition_block_test( size_t max_block_size = 32 )
 
 TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder )
 {
-	QR_decomposition_block_test< float >();
+	QR_decomposition_block_test< float >( SOLVING_TYPE::QR_decomposition );
 }
 
 TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder )
 {
-	QR_decomposition_block_test< double >();
+	QR_decomposition_block_test< double >( SOLVING_TYPE::QR_decomposition );
 }
 
 TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder )
 {
-	QR_decomposition_block_test< thrust::complex< float > >();
+	QR_decomposition_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition );
 }
 
 TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder )
 {
-	QR_decomposition_block_test< thrust::complex< double > >( 16 );
+	QR_decomposition_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, 16 );
 }
 
