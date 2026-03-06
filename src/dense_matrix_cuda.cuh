@@ -10,30 +10,33 @@
 
 #include "utilities.cuh"
 
+
+// Type definition for state of dense_matrix_cuda
+// ==============================================
+enum class DYNAMIC_STATE : int
+{
+	NONE,
+	ROL_INIT,
+	COL_INIT,
+	LU_DECOMPOSED,
+	QR_DECOMPOSED
+};
+
 template< typename T >
 class dense_matrix_cuda
 {
-	// Type definition for state of dense_matrix
-	// =========================================
-	enum class DYNAMIC_STATE : int
-	{
-		INIT,
-		LU_DECOMPOSED,
-		QR_DECOMPOSED
-	};
-
 public:
 	/// constructors
 	dense_matrix_cuda() = default;
 	dense_matrix_cuda( const dense_matrix_cuda& );
 	dense_matrix_cuda( dense_matrix_cuda&& ) = default;
-	dense_matrix_cuda( size_t rows, size_t cols );
+	dense_matrix_cuda( DYNAMIC_STATE init_state, size_t rows, size_t cols );
 
 	/// destructor
 	~dense_matrix_cuda();
 
 	/// sets matrix sizes and allocates memory
-	void init( size_t rows, size_t cols );
+	void init( DYNAMIC_STATE init_state, size_t rows, size_t cols );
 	/// adds elements and throws exception if row / col is out of range
 	void set_element( T value, size_t row, size_t col );
 
@@ -52,6 +55,8 @@ public:
 	void solve_LU( std::vector< T >& x, const std::vector< T >& b ) const;
 
 private:
+	/// function calculates index in one of initial matrix state
+	size_t calc_elem_idx( size_t row, size_t col ) const;
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
 	void create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const;
 	/// decomposes block on cpu
@@ -64,7 +69,7 @@ private:
 
 private:
 	/// current state of matrix
-	DYNAMIC_STATE m_dynamic_state{ DYNAMIC_STATE::INIT };
+	DYNAMIC_STATE m_dynamic_state{ DYNAMIC_STATE::NONE };
 
 	/// amount of rows
 	size_t m_rows{ 0 };
@@ -79,15 +84,44 @@ private:
 	T* m_d_betas{ nullptr }, * m_d_v_firsts{ nullptr };
 
 	/// row permutation
-	std::vector< size_t > m_p_row;		/// under i-th index : original row number
-
+	std::vector< size_t > m_p_row;
+	size_t* m_d_p_row{ nullptr };
 };
 
+__host__ __device__ __forceinline__
+size_t calc_elem_idx_RLD( size_t row, size_t col, size_t cols )
+{
+	// row majority
+	return col + row * cols;
+}
+
+__host__ __device__ __forceinline__
+size_t calc_elem_idx_CLD( size_t row, size_t col, size_t rows )
+{
+	// column majority
+	return row + col * rows;
+}
 
 template< typename T >
-dense_matrix_cuda< T >::dense_matrix_cuda( size_t rows, size_t cols )
+inline size_t dense_matrix_cuda< T >::calc_elem_idx( size_t row, size_t col ) const
 {
-	init( rows, cols );
+	switch( m_dynamic_state )
+	{
+	case DYNAMIC_STATE::COL_INIT:
+		return calc_elem_idx_CLD( row, col, m_rows );
+
+	case DYNAMIC_STATE::ROL_INIT:
+		return calc_elem_idx_RLD( row, col, m_cols );
+
+	default:
+		throw std::invalid_argument( "dense_matrix_cuda< T >::calc_elem_idx - state not supported" );
+	}
+}
+
+template< typename T >
+dense_matrix_cuda< T >::dense_matrix_cuda( DYNAMIC_STATE init_state, size_t rows, size_t cols )
+{
+	init( init_state, rows, cols );
 }
 
 
@@ -111,12 +145,16 @@ dense_matrix_cuda< T >::~dense_matrix_cuda()
 		cudaFree( m_d_betas );
 	if( m_d_v_firsts )
 		cudaFree( m_d_v_firsts );
+	if( m_d_p_row )
+		cudaFree( m_d_p_row );
 }
 
 
 template< typename T >
-void dense_matrix_cuda< T >::init( size_t rows, size_t cols )
+void dense_matrix_cuda< T >::init( DYNAMIC_STATE init_state, size_t rows, size_t cols )
 {
+	m_dynamic_state = init_state;
+
 	m_rows = rows;
 	m_cols = cols;
 
@@ -127,7 +165,7 @@ void dense_matrix_cuda< T >::init( size_t rows, size_t cols )
 template< typename T >
 void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 {
-	auto elem_idx = calc_elem_idx( row, col, m_rows );
+	size_t elem_idx{ calc_elem_idx( row, col ) };
 
 	if( elem_idx >= m_matrix.size() )
 		throw std::out_of_range( "dense_matrix_cuda< T >::set_element - elem_idx >= m_matrix.size()" );
@@ -141,7 +179,8 @@ void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, c
 {
 	switch( m_dynamic_state )
 	{
-	case DYNAMIC_STATE::INIT:
+	case DYNAMIC_STATE::COL_INIT:
+	case DYNAMIC_STATE::ROL_INIT:
 		if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
 			throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_vector - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
 
@@ -149,7 +188,7 @@ void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, c
 			r[ row ] = -b[ row ];
 		for( size_t row{ 0 }; row < m_rows; ++row )
 			for( size_t col{ 0 }; col < m_cols; ++col )
-				r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col, m_rows ) ] );
+				r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col ) ] );
 		break;
 
 	default:
@@ -166,7 +205,7 @@ void dense_matrix_cuda< T >::choose_pivot( const size_t step )
 
 	for( size_t row{ step }; row < m_rows; ++row )
 	{
-		const double new_abs{ abs_val( m_matrix[ m_p_row[ row ] ][ step ] ) };
+		const double new_abs{ abs_val( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], step, m_cols ) ] ) };
 
 		if( new_abs > ABS_VAL )
 		{
@@ -182,14 +221,97 @@ void dense_matrix_cuda< T >::choose_pivot( const size_t step )
 template< typename T >
 void dense_matrix_cuda< T >::LU_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps )
 {
+	const auto block_steps = std::min( max_steps, step_offset + block_size );
+
+	for( size_t step{ step_offset }; step < block_steps; ++step )
+	{
+		choose_pivot( step );
+
+		const size_t eliminating_row = m_p_row[ step ];
+		const auto pivot{ m_matrix[ calc_elem_idx_RLD( eliminating_row, step, m_cols ) ] };
+
+		for( size_t row{ step + 1 }; row < m_rows; ++row )
+		{
+			const size_t eliminated_row = m_p_row[ row ];
+
+			const size_t elimintor_idx{ calc_elem_idx_RLD( eliminated_row, step, m_cols ) };
+
+			m_matrix[ elimintor_idx ] /= pivot;
+			const auto eliminator = m_matrix[ elimintor_idx ];
+
+			for( size_t col{ step + 1 }; col < std::min( m_cols, step_offset + block_size ); ++col )
+				m_matrix[ calc_elem_idx_RLD( eliminated_row, col, m_cols ) ] -= eliminator * m_matrix[ calc_elem_idx_RLD( eliminating_row, col, m_cols ) ];
+		}
+	}
 }
 
 
 template< typename T >
+__global__
+void L_block_update(
+	T* A_in,
+	const size_t* p_row,
+	const int A_cols,
+	const int block_size,
+	const int row_offset,
+	const int col_offset )
+{
+	const int col = col_offset + threadIdx.x + blockDim.x * blockIdx.x;
+
+	if( col >= A_cols )
+		return;
+
+	for( int r{ 0 }; r < block_size; ++r )
+	{
+		const size_t r_orig{ p_row[ row_offset + r ] };
+		const size_t in_idx = calc_elem_idx_RLD( r_orig, col, A_cols );
+
+		T res{ A_in[ in_idx ] };
+
+		for( int c{ 0 }; c < r; ++c )
+		{
+			const size_t p_r_orig{ p_row[ row_offset + c ] };
+			res -= A_in[ calc_elem_idx_RLD( r_orig, row_offset + c, A_cols ) ]
+				 * A_in[ calc_elem_idx_RLD( p_r_orig, col, A_cols ) ];
+		}
+
+		A_in[ in_idx ] = res;
+	}
+}
+
+template< typename T >
+__global__
+void LU_Schur_complement(
+	T* A_in,
+	const size_t* p_row,
+	const int A_rows,
+	const int A_cols,
+	const int block_size,
+	const int row_offset,
+	const int col_offset )
+{
+	const int col = col_offset + threadIdx.x + blockDim.x * blockIdx.x;
+	const int row = col_offset + threadIdx.y + blockDim.y * blockIdx.y;
+
+	if( row >= A_rows || col >= A_cols )
+		return;
+
+	const size_t row_orig{ p_row[ row ] };
+	const size_t in_idx = calc_elem_idx_RLD( row_orig, col, A_cols );
+
+	T res{ A_in[ in_idx ] };
+
+	for( int i{ row_offset }; i < row_offset + block_size; ++i )
+		res -= A_in[ calc_elem_idx_RLD( row_orig, i, A_cols ) ] * A_in[ calc_elem_idx_RLD( p_row[ i ], col, A_cols ) ];
+
+	A_in[ in_idx ] = res;
+}
+
+template< typename T >
 void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 {
-	if( m_dynamic_state != DYNAMIC_STATE::INIT )
-		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition() - m_dynamic_state != DYNAMIC_STATE::INIT" );
+	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition() - m_dynamic_state != DYNAMIC_STATE::ROL_INIT" );
 
 	if( m_rows < m_cols )
 		throw std::invalid_argument( "dense_matrix< T >::LU_decomposition: m_rows < m_cols" );
@@ -197,10 +319,66 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 	m_p_row.resize( m_rows );
 	std::iota( m_p_row.begin(), m_p_row.end(), 0 );
 
-	//const auto max_steps{ std::min( m_rows - 1, m_cols ) };
-	//size_t step_offset{ 0 }, row_offset{ 0 };
+	cudaMalloc( &m_d_matrix, m_matrix.size() * sizeof( T ) );
+	cudaMemcpy( m_d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
+	cudaMalloc( &m_d_p_row, m_rows * sizeof( size_t ) );
 
-	// to be continued
+	const size_t max_steps{ std::min( m_rows - 1, m_cols ) };
+	size_t step_offset{ 0 }, col_offset{ 0 };
+
+	while( step_offset < max_steps )
+	{
+		const auto b_size = std::min( block_size, max_steps - step_offset );
+		//const auto b_end{ step_offset + b_size };
+
+		LU_block_decomposition_cpu( b_size, step_offset, max_steps );
+
+		cudaMemcpy( m_d_p_row + step_offset, m_p_row.data() + step_offset, ( m_rows - step_offset ) * sizeof( size_t ), cudaMemcpyHostToDevice );
+
+		// test
+		//std::vector< T > mx( m_matrix.size(), T{} );
+		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
+		// test
+
+		for( size_t r{ step_offset }; r < m_rows; ++r )
+		{
+			const auto start_offset{ step_offset + m_p_row[ r ] * m_cols };
+			cudaMemcpy( m_d_matrix + start_offset, m_matrix.data() + start_offset, b_size * sizeof( T ), cudaMemcpyHostToDevice );
+		}
+
+		col_offset += b_size;
+
+		// test
+		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
+		// test
+
+		const dim3 block1Dim( b_size );
+		const dim3 grid1Dim( div_up( m_cols - col_offset, b_size ) );
+		L_block_update<<< grid1Dim, block1Dim >>> ( m_d_matrix, m_d_p_row, m_cols, b_size, step_offset, col_offset );
+
+		// test
+		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
+		// test
+
+		const dim3 block2Dim( b_size, b_size );
+		const dim3 grid2Dim( div_up( m_cols - col_offset, b_size ), div_up( m_rows - col_offset, b_size ) );
+		LU_Schur_complement<<< grid2Dim, block2Dim >>>( m_d_matrix, m_d_p_row, m_rows, m_cols, b_size, step_offset, col_offset );
+
+		// test
+		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
+		// test
+
+		for( size_t r{ step_offset }; r < m_rows; ++r )
+		{
+			const auto start_offset{ col_offset + m_p_row[ r ] * m_cols };
+			cudaMemcpy( m_matrix.data() + start_offset, m_d_matrix + start_offset, ( m_cols - col_offset ) * sizeof( T ), cudaMemcpyDeviceToHost );
+		}
+
+		step_offset += b_size;
+
+	}
+
+	m_dynamic_state = DYNAMIC_STATE::LU_DECOMPOSED;
 }
 
 
@@ -235,11 +413,11 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 	{
 		T vTb{ conjugate( m_v_firsts[ step ] ) * x[ step ] };
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTb += conjugate( m_matrix[ calc_elem_idx( r, step, m_rows ) ] ) * x[ r ];
+			vTb += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * x[ r ];
 
 		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_rows ) ] * vTb;
+			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] * vTb;
 	}
 
 	// then solve Rx = Q^T * b by back substitution
@@ -248,9 +426,9 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 	{
 		T sum{ T{} };
 		for( int c{ r + 1 }; c < m_cols; ++c )
-			sum += m_matrix[ calc_elem_idx( r, c, m_rows ) ] * x[ c ];
+			sum += m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * x[ c ];
 
-		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx( r, r, m_rows ) ];
+		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx_CLD( r, r, m_rows ) ];
 	}
 }
 
@@ -263,7 +441,7 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 	if( lstep >= m_betas.size() )
 		throw std::out_of_range( "dense_matrix_cuda< T >::create_QR_triangular_factor_T - lstep >= m_betas.size()" );
 
-	Tmx[ calc_elem_idx( step, step, block_size ) ] = m_betas[ lstep ];
+	Tmx[ calc_elem_idx_CLD( step, step, block_size ) ] = m_betas[ lstep ];
 
 	if( step > 0 )
 	{
@@ -271,17 +449,17 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 		for( size_t s{ step_offset }; s < lstep; ++s )
 		{
 			auto s_in{ s - step_offset };
-			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx( lstep, s, m_rows ) ] ) * m_v_firsts[ lstep ];
+			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx_CLD( lstep, s, m_rows ) ] ) * m_v_firsts[ lstep ];
 			for( size_t r{ lstep + 1 }; r < m_rows; ++r )
-				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx( r, s, m_rows ) ] ) * m_matrix[ calc_elem_idx( r, lstep, m_rows ) ];
+				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, s, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, lstep, m_rows ) ];
 		}
 
 		for( size_t sr{ 0 }; sr < step; ++sr )
 		{
 			for( size_t sc{ 0 }; sc < step; ++sc )
-				Tmx[ calc_elem_idx( sr, step, block_size ) ] -= Tmx[ calc_elem_idx( sr, sc, block_size ) ] * VTv[ sc ];
+				Tmx[ calc_elem_idx_CLD( sr, step, block_size ) ] -= Tmx[ calc_elem_idx_CLD( sr, sc, block_size ) ] * VTv[ sc ];
 
-			Tmx[ calc_elem_idx( sr, step, block_size ) ] *= m_betas[ lstep ];
+			Tmx[ calc_elem_idx_CLD( sr, step, block_size ) ] *= m_betas[ lstep ];
 		}
 	}
 }
@@ -306,14 +484,14 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 		// ==============
 		for( size_t r{ step }; r < m_rows; ++r )
 		{
-			double abs_v = abs_val( m_matrix[ calc_elem_idx( r, step, m_rows ) ] );
+			double abs_v = abs_val( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] );
 			col_norm += abs_v * abs_v;
 		}
 		col_norm = std::sqrt( col_norm );
 
 		// stabilization sign calculation
 		// ==============================
-		const size_t step_idx = calc_elem_idx( step, step, m_rows );
+		const size_t step_idx = calc_elem_idx_CLD( step, step, m_rows );
 
 		double alpha_abs = abs_val( m_matrix[ step_idx ] );
 		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ step_idx ] ) / alpha_abs : T{ -1 } );
@@ -324,7 +502,7 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 		T vTv{ conjugate( m_v_firsts[ step ] ) * m_v_firsts[ step ] };
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTv += conjugate( m_matrix[ calc_elem_idx( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx( r, step, m_rows ) ];
+			vTv += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ];
 
 		m_betas[ step ] = 2.0 / vTv;
 
@@ -336,19 +514,19 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 		{
 			const size_t c_in{ c - step_offset };
 
-			vTA[ c_in ] = conjugate( m_v_firsts[ step ] ) * m_matrix[ calc_elem_idx( step, c, m_rows ) ];
+			vTA[ c_in ] = conjugate( m_v_firsts[ step ] ) * m_matrix[ calc_elem_idx_CLD( step, c, m_rows ) ];
 			for( size_t r{ step + 1 }; r < m_rows; ++r )
-				vTA[ c_in ] += conjugate( m_matrix[ calc_elem_idx( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx( r, c, m_rows ) ];
+				vTA[ c_in ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ];
 		}
 
 		// calculate (I-bvvT)A = A - b(v(vTA)) only for first block_size columns
 		// =====================================================================
 		for( size_t c{ step + 1 }; c < l_max_col; ++c )
-			m_matrix[ calc_elem_idx( step, c, m_rows ) ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c - step_offset ];
+			m_matrix[ calc_elem_idx_CLD( step, c, m_rows ) ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c - step_offset ];
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
 			for( size_t c{ step + 1 }; c < l_max_col; ++c )
-				m_matrix[ calc_elem_idx( r, c, m_rows ) ] -= m_betas[ step ] * m_matrix[ calc_elem_idx( r, step, m_rows ) ] * vTA[ c - step_offset ];
+				m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] * vTA[ c - step_offset ];
 	}
 }
 
@@ -372,26 +550,26 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 
 	if( active )
 	{
-		sum = conjugate( v_firsts[ row ] ) * A_in[ calc_elem_idx( row, col, A_rows ) ];
+		sum = conjugate( v_firsts[ row ] ) * A_in[ calc_elem_idx_CLD( row, col, A_rows ) ];
 		for( int r{ row + 1 }; r < A_rows; ++r )
-			sum += conjugate( A_in[ calc_elem_idx( r, row, A_rows ) ] ) * A_in[ calc_elem_idx( r, col, A_rows ) ];
+			sum += conjugate( A_in[ calc_elem_idx_CLD( r, row, A_rows ) ] ) * A_in[ calc_elem_idx_CLD( r, col, A_rows ) ];
 
-		TVTA[ calc_elem_idx( threadIdx.y, col, block_size ) ] = sum;
+		TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;
 	}
 
 	__syncthreads();
 
 	if( active )
 	{
-		sum = conjugate( TVTA[ calc_elem_idx( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx( 0, col, block_size ) ];
+		sum = conjugate( TVTA[ calc_elem_idx_CLD( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( 0, col, block_size ) ];
 		for( int r{ 1 }; r <= threadIdx.y; ++r )
-			sum += conjugate( TVTA[ calc_elem_idx( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx( r, col, block_size ) ];
+			sum += conjugate( TVTA[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( r, col, block_size ) ];
 	}
 
 	__syncthreads();
 
 	if ( active )
-		TVTA[ calc_elem_idx( threadIdx.y, col, block_size ) ] = sum;	
+		TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;	
 }
 
 
@@ -423,19 +601,19 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 	for( int c{ 0 }; c < sum_range; ++c )
 	{
 		const int c_i = t_col + c;
-		T v_i = ( c == t_row ? v_firsts[ c_i ] : A_out[ calc_elem_idx( row, c_i, A_rows ) ] );
-		sum += v_i * TVTA[ calc_elem_idx( c, col, block_size ) ];
+		T v_i = ( c == t_row ? v_firsts[ c_i ] : A_out[ calc_elem_idx_CLD( row, c_i, A_rows ) ] );
+		sum += v_i * TVTA[ calc_elem_idx_CLD( c, col, block_size ) ];
 	}
 
-	A_out[ calc_elem_idx( row, col, A_rows ) ] -= sum;
+	A_out[ calc_elem_idx_CLD( row, col, A_rows ) ] -= sum;
 }
 
 
 template< typename T >
 void dense_matrix_cuda< T >::QR_decomposition( const size_t block_size )
 {
-	if( m_dynamic_state != DYNAMIC_STATE::INIT )
-		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::INIT" );
+	if( m_dynamic_state != DYNAMIC_STATE::COL_INIT )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::COL_INIT" );
 
 	const auto max_steps{ std::min( m_rows - 1, m_cols ) };
 	size_t step_offset{ 0 }, row_offset{ 0 };
@@ -523,3 +701,4 @@ void dense_matrix_cuda< T >::QR_decomposition( const size_t block_size )
 
 	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
 }
+

@@ -18,18 +18,6 @@ int div_up( int a, int b )
 	return ( a + b - 1 ) / b;
 }
 
-#ifdef __CUDACC__
-__host__ __device__ __forceinline__
-#else
-inline
-#endif
-size_t calc_elem_idx( size_t row, size_t col, size_t rows )
-{
-    // column majority
-	return row + col * rows;
-
-}
-
 template< typename T >
 struct real_type
 {
