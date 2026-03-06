@@ -26,7 +26,6 @@ add_executable(${PROJECT_NAME}
     external/utilities.cuh
     src/dense_matrix_cuda.cuh
     src/dense_matrix_cuda.cu
-    external/dense_matrix.hpp
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
