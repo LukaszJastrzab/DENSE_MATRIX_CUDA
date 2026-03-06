@@ -329,16 +329,10 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 	while( step_offset < max_steps )
 	{
 		const auto b_size = std::min( block_size, max_steps - step_offset );
-		//const auto b_end{ step_offset + b_size };
 
 		LU_block_decomposition_cpu( b_size, step_offset, max_steps );
 
 		cudaMemcpy( m_d_p_row + step_offset, m_p_row.data() + step_offset, ( m_rows - step_offset ) * sizeof( size_t ), cudaMemcpyHostToDevice );
-
-		// test
-		//std::vector< T > mx( m_matrix.size(), T{} );
-		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
-		// test
 
 		for( size_t r{ step_offset }; r < m_rows; ++r )
 		{
@@ -348,25 +342,13 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 
 		col_offset += b_size;
 
-		// test
-		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
-		// test
-
 		const dim3 block1Dim( b_size );
 		const dim3 grid1Dim( div_up( m_cols - col_offset, b_size ) );
 		L_block_update<<< grid1Dim, block1Dim >>> ( m_d_matrix, m_d_p_row, m_cols, b_size, step_offset, col_offset );
 
-		// test
-		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
-		// test
-
 		const dim3 block2Dim( b_size, b_size );
 		const dim3 grid2Dim( div_up( m_cols - col_offset, b_size ), div_up( m_rows - col_offset, b_size ) );
 		LU_Schur_complement<<< grid2Dim, block2Dim >>>( m_d_matrix, m_d_p_row, m_rows, m_cols, b_size, step_offset, col_offset );
-
-		// test
-		//cudaMemcpy( mx.data(), m_d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
-		// test
 
 		for( size_t r{ step_offset }; r < m_rows; ++r )
 		{
@@ -375,7 +357,6 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 		}
 
 		step_offset += b_size;
-
 	}
 
 	m_dynamic_state = DYNAMIC_STATE::LU_DECOMPOSED;

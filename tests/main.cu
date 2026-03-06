@@ -24,7 +24,7 @@ TEST( test_test_test, LU_test )
 
 	dense_matrix< float > Af;
 	dense_matrix_cuda< float > A;
-	size_t mx_size{ 5 };
+	size_t mx_size{ 7 };
 
 	A.init( DYNAMIC_STATE::ROL_INIT, mx_size, mx_size );
 	Af.init( mx_size, mx_size );
@@ -49,7 +49,7 @@ TEST( test_test_test, LU_test )
 
 	Af.LU_decomposition( 1 );
 
-	A.LU_decomposition( 2 );
+	A.LU_decomposition( 4 );
 	A.solve_LU( x, b );
 
 	A_.count_residual_vector( x, b, r );
