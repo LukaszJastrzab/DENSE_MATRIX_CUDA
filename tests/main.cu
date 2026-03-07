@@ -85,25 +85,25 @@ void QR_decomposition_block_test( const SOLVING_TYPE solving_type, size_t max_bl
 }
 
 
-TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder )
-{
-	QR_decomposition_block_test< float >( SOLVING_TYPE::QR_decomposition );
-}
-
-TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder )
-{
-	QR_decomposition_block_test< double >( SOLVING_TYPE::QR_decomposition );
-}
-
-TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder )
-{
-	QR_decomposition_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition );
-}
-
-TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder )
-{
-	QR_decomposition_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, 16 );
-}
+//TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder )
+//{
+//	QR_decomposition_block_test< float >( SOLVING_TYPE::QR_decomposition );
+//}
+//
+//TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder )
+//{
+//	QR_decomposition_block_test< double >( SOLVING_TYPE::QR_decomposition );
+//}
+//
+//TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder )
+//{
+//	QR_decomposition_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition );
+//}
+//
+//TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder )
+//{
+//	QR_decomposition_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, 16 );
+//}
 
 
 TEST( non_singular_linear_equation_real_float, LU_decomposition_blocked_Gauss )

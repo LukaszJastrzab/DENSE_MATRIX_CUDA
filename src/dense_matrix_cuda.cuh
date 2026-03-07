@@ -282,16 +282,31 @@ void LU_Schur_complement(
 	const int col = col_offset + threadIdx.x + blockDim.x * blockIdx.x;
 	const int row = col_offset + threadIdx.y + blockDim.y * blockIdx.y;
 
+	const int mx_size = blockDim.x;
+	const int mx_count = blockDim.x * blockDim.y;
+
+	const size_t row_orig{ p_row[ row ] };
+
+	extern __shared__ unsigned char sdata_raw[];
+	T* L = reinterpret_cast< T* >( sdata_raw );
+	T* U = reinterpret_cast< T* >( sdata_raw + mx_count * sizeof( T ) );
+
+	if ( row < A_rows )
+		L[ calc_elem_idx_RLD( threadIdx.y, threadIdx.x, mx_size ) ] = A_in[ calc_elem_idx_RLD( row_orig, row_offset + threadIdx.x, A_cols ) ];
+	if ( col < A_cols )
+		U[ calc_elem_idx_RLD( threadIdx.y, threadIdx.x, mx_size ) ] = A_in[ calc_elem_idx_RLD( p_row[ row_offset + threadIdx.y ], col, A_cols ) ];
+
+	__syncthreads();
+
 	if( row >= A_rows || col >= A_cols )
 		return;
 
-	const size_t row_orig{ p_row[ row ] };
 	const size_t in_idx = calc_elem_idx_RLD( row_orig, col, A_cols );
 
 	T res{ A_in[ in_idx ] };
 
-	for( int i{ row_offset }; i < row_offset + block_size; ++i )
-		res -= A_in[ calc_elem_idx_RLD( row_orig, i, A_cols ) ] * A_in[ calc_elem_idx_RLD( p_row[ i ], col, A_cols ) ];
+	for( int i{ 0 }; i < block_size; ++i )
+		res -= L[ calc_elem_idx_RLD( threadIdx.y, i, mx_size ) ] * U[ calc_elem_idx_RLD( i, threadIdx.x, mx_size ) ];
 
 	A_in[ in_idx ] = res;
 }
@@ -334,13 +349,14 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 
 		col_offset += b_size;
 
-		const dim3 block1Dim( b_size );
-		const dim3 grid1Dim( div_up( m_cols - col_offset, b_size ) );
-		L_block_update << < grid1Dim, block1Dim >> > ( d_matrix, d_p_row, m_cols, b_size, step_offset, col_offset );
+		const dim3 block1_dim( b_size );
+		const dim3 grid1_dim( div_up( m_cols - col_offset, b_size ) );
+		L_block_update <<< grid1_dim, block1_dim >>> ( d_matrix, d_p_row, m_cols, b_size, step_offset, col_offset );
 
-		const dim3 block2Dim( b_size, b_size );
-		const dim3 grid2Dim( div_up( m_cols - col_offset, b_size ), div_up( m_rows - col_offset, b_size ) );
-		LU_Schur_complement << < grid2Dim, block2Dim >> > ( d_matrix, d_p_row, m_rows, m_cols, b_size, step_offset, col_offset );
+		const dim3 block2_dim( b_size, b_size );
+		const dim3 grid2_dim( div_up( m_cols - col_offset, b_size ), div_up( m_rows - col_offset, b_size ) );
+		const size_t smem_size{ 2ull * b_size * b_size * sizeof( T ) };
+		LU_Schur_complement <<< grid2_dim, block2_dim, smem_size >>> ( d_matrix, d_p_row, m_rows, m_cols, b_size, step_offset, col_offset );
 
 		for( size_t r{ step_offset }; r < m_rows; ++r )
 		{
