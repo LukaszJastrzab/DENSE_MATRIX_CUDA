@@ -275,7 +275,6 @@ void LU_Schur_complement(
 	const size_t* p_row,
 	const int A_rows,
 	const int A_cols,
-	const int block_size,
 	const int row_offset,
 	const int col_offset )
 {
@@ -305,7 +304,7 @@ void LU_Schur_complement(
 
 	T res{ A_in[ in_idx ] };
 
-	for( int i{ 0 }; i < block_size; ++i )
+	for( int i{ 0 }; i < blockDim.x; ++i )
 		res -= L[ calc_elem_idx_RLD( threadIdx.y, i, mx_size ) ] * U[ calc_elem_idx_RLD( i, threadIdx.x, mx_size ) ];
 
 	A_in[ in_idx ] = res;
@@ -356,7 +355,7 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 		const dim3 block2_dim( b_size, b_size );
 		const dim3 grid2_dim( div_up( m_cols - col_offset, b_size ), div_up( m_rows - col_offset, b_size ) );
 		const size_t smem_size{ 2ull * b_size * b_size * sizeof( T ) };
-		LU_Schur_complement <<< grid2_dim, block2_dim, smem_size >>> ( d_matrix, d_p_row, m_rows, m_cols, b_size, step_offset, col_offset );
+		LU_Schur_complement <<< grid2_dim, block2_dim, smem_size >>> ( d_matrix, d_p_row, m_rows, m_cols, step_offset, col_offset );
 
 		for( size_t r{ step_offset }; r < m_rows; ++r )
 		{
