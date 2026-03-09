@@ -40,8 +40,10 @@ public:
 	/// adds elements and throws exception if row / col is out of range
 	void set_element( T value, size_t row, size_t col );
 
-	// it counts value r := Ax - b
+	/// it counts value r := Ax - b
 	void count_residual_vector( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
+	/// Method improves the accuracy of the solution
+	void iterative_refinement( std::vector< T >& x, const std::vector< T >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig = nullptr ) const;
 
 	/// performs blocked QR decomposition by Householder algorithm "in situ" using CUDA
 	void QR_decomposition( const size_t block_size = 8 );
@@ -50,7 +52,7 @@ public:
 
 	/// decomposes matrix "in situ" to factors LU using Gauss elimination using CUDA
 	/// with partial pivoting (one column search)
-	void LU_decomposition( const size_t block_size );
+	void LU_decomposition( const size_t block_size = 32 );
 	/// solves equation Ax=b, where A is decomposed to factors LU (by Gauss elimination)
 	void solve_LU( std::vector< T >& x, const std::vector< T >& b, std::vector< T >* y = nullptr ) const;
 
@@ -65,6 +67,10 @@ private:
 	void LU_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps );
 	/// partial pivoting for Gauss elimination
 	void choose_pivot( const size_t step );
+	/// counts residual vector functions that depends of dynamic matrix state
+	void count_residual_Ax_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
+	void count_residual_LUx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
+	void count_residual_QRx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
 
 
 private:
@@ -170,14 +176,15 @@ void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, c
 	{
 	case DYNAMIC_STATE::COL_INIT:
 	case DYNAMIC_STATE::ROL_INIT:
-		if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
-			throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_vector - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
+		count_residual_Ax_b( x, b, r );
+		break;
 
-		for( size_t row{ 0 }; row < m_rows; ++row )
-			r[ row ] = -b[ row ];
-		for( size_t row{ 0 }; row < m_rows; ++row )
-			for( size_t col{ 0 }; col < m_cols; ++col )
-				r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col ) ] );
+	case DYNAMIC_STATE::LU_DECOMPOSED:
+		count_residual_LUx_b( x, b, r );
+		break;
+
+	case DYNAMIC_STATE::QR_DECOMPOSED:
+		count_residual_QRx_b( x, b, r );
 		break;
 
 	default:
@@ -731,3 +738,144 @@ void dense_matrix_cuda< T >::QR_decomposition( const size_t block_size )
 	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
 }
 
+template< typename T >
+void dense_matrix_cuda< T >::count_residual_Ax_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+{
+	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
+		throw std::invalid_argument( "dense_matrix< T >::count_residual_Ax_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
+	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT && m_dynamic_state != DYNAMIC_STATE::COL_INIT )
+		throw std::invalid_argument( "dense_matrix< T >::count_residual_Ax_b - m_dynamic_state != DYNAMIC_STATE::INIT" );
+
+	for( size_t row{ 0 }; row < m_rows; ++row )
+		r[ row ] = -b[ row ];
+	for( size_t row{ 0 }; row < m_rows; ++row )
+		for( size_t col{ 0 }; col < m_cols; ++col )
+			r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col ) ] );
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+{
+	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_LUx_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
+	if( m_dynamic_state != DYNAMIC_STATE::LU_DECOMPOSED )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_LUx_b - m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED" );
+
+	std::vector< T > w( m_rows, T{} );
+
+	// compute w=Ux
+	// ============
+	for( size_t row{ 0 }; row < m_rows; ++row )
+		for( size_t col{ row }; col < m_cols; ++col )
+			w[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] );
+
+
+	// compute r = Lw - b
+	// ==================
+	for( size_t row{ 0 }; row < m_rows; ++row )
+	{
+		r[ m_p_row[ row ] ] = w[ row ] - b[ m_p_row[ row ] ];
+
+		for( size_t col{ 0 }; col < row; ++col )
+			r[ m_p_row[ row ] ] += w[ col ] * m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ];
+	}
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+{
+	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_QRx_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
+	if( m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_QRx_b - m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED" );
+
+	const int max_steps = std::min( m_rows - 1, m_cols );
+
+	for( size_t row{ 0 }; row < m_rows; ++row )
+	{
+		r[ row ] = T{};
+		for( size_t col{ row }; col < m_cols; ++col )
+			r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx_CLD( row, col, m_rows ) ] );
+	}
+
+	for( int step{ max_steps - 1 }; step >= 0; --step )
+	{
+		T vRx{ conjugate( m_v_firsts[ step ] ) * r[ step ] };
+		for( int s{ step + 1 }; s < static_cast< int >( m_rows ); ++s )
+			vRx += conjugate( m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] ) * r[ s ];
+
+		r[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vRx;
+		for( int s{ step + 1 }; s < static_cast< int >( m_rows ); ++s )
+			r[ s ] -= m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] * vRx;
+	}
+
+	for( size_t row{ 0 }; row < m_rows; ++row )
+		r[ row ] -= b[ row ];
+}
+
+template < typename T >
+void dense_matrix_cuda< T >::iterative_refinement( std::vector< T >& x, const std::vector< T >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig ) const
+{
+	if( m_rows < m_cols )
+		throw std::exception( "dense_matrix_cuda< T >::iterative_refinement - m_rows < m_cols" );
+
+	const size_t N = m_rows;
+
+	std::vector< T > d( N );
+	std::vector< T > r( N );
+	std::vector< T > y( N );
+
+	size_t iteration = 0;
+
+	if( A_orig != nullptr )
+		A_orig->count_residual_vector( x, b, r );
+	else
+		count_residual_vector( x, b, r );
+
+	double v_norm = l2_norm( r );
+	double new_v_norm;
+
+	// int while condition are contained 2 conditions to stop the calculations,
+	// third condition is implemented inside the loop
+	// =======================================================================
+	while( iteration < max_it && v_norm > acc )
+	{
+		switch( m_dynamic_state )
+		{
+		case DYNAMIC_STATE::LU_DECOMPOSED:
+			solve_LU( d, r, &y );
+			break;
+
+		case DYNAMIC_STATE::QR_DECOMPOSED:
+			solve_QR( d, r );
+			break;
+
+		default:
+			throw std::invalid_argument( "dense_matrix< T >::iterative_refinement - dynamic state not supported" );
+		}
+
+		for( size_t i = 0; i < N; ++i )
+			d[ i ] = x[ i ] - d[ i ];
+
+		if( A_orig != nullptr )
+			A_orig->count_residual_vector( d, b, r );
+		else
+			count_residual_vector( d, b, r );
+
+		new_v_norm = l2_norm( r );
+
+		// if norm of new residual vector is less then previous then accept new solution
+		// =============================================================================
+		if( new_v_norm < v_norm )
+		{
+			for( size_t i = 0; i < N; ++i )
+				x[ i ] = d[ i ];
+			v_norm = new_v_norm;
+			iteration++;
+		}
+		// otherwise keep previous solution
+		// ================================
+		else
+			break;
+	}
+}
