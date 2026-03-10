@@ -35,26 +35,29 @@ public:
 	/// destructor
 	~dense_matrix_cuda();
 
+	/// double type used in solving / refinement
+	using DT = typename double_type< T >::type;
+
 	/// sets matrix sizes and allocates memory
 	void init( DYNAMIC_STATE init_state, size_t rows, size_t cols );
 	/// adds elements and throws exception if row / col is out of range
 	void set_element( T value, size_t row, size_t col );
 
 	/// it counts value r := Ax - b
-	void count_residual_vector( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
+	void count_residual_vector( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	/// Method improves the accuracy of the solution
-	void iterative_refinement( std::vector< T >& x, const std::vector< T >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig = nullptr ) const;
+	void iterative_refinement( std::vector< DT >& x, const std::vector< DT >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig = nullptr ) const;
 
 	/// performs blocked QR decomposition by Householder algorithm "in situ" using CUDA
 	void QR_decomposition( const size_t block_size = 8 );
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
-	void solve_QR( std::vector< T >& x, const std::vector< T >& b ) const;
+	void solve_QR( std::vector< DT >& x, const std::vector< DT >& b ) const;
 
 	/// decomposes matrix "in situ" to factors LU using Gauss elimination using CUDA
 	/// with partial pivoting (one column search)
 	void LU_decomposition( const size_t block_size = 32 );
 	/// solves equation Ax=b, where A is decomposed to factors LU (by Gauss elimination)
-	void solve_LU( std::vector< T >& x, const std::vector< T >& b, std::vector< T >* y = nullptr ) const;
+	void solve_LU( std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >* y = nullptr ) const;
 
 private:
 	/// function calculates index in one of initial matrix state
@@ -68,9 +71,9 @@ private:
 	/// partial pivoting for Gauss elimination
 	void choose_pivot( const size_t step );
 	/// counts residual vector functions that depends of dynamic matrix state
-	void count_residual_Ax_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
-	void count_residual_LUx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
-	void count_residual_QRx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const;
+	void count_residual_Ax_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
+	void count_residual_LUx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
+	void count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 
 
 private:
@@ -170,7 +173,7 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 
 
 template< typename T >
-void dense_matrix_cuda< T >::count_residual_vector( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+void dense_matrix_cuda< T >::count_residual_vector( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const
 {
 	switch( m_dynamic_state )
 	{
@@ -387,7 +390,7 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 
 
 template< typename T >
-void dense_matrix_cuda< T >::solve_LU( std::vector< T >& x, const std::vector< T >& b, std::vector< T >* y ) const
+void dense_matrix_cuda< T >::solve_LU( std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >* y ) const
 {
 	if( b.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_LU - b.size() != m_rows" );
@@ -396,7 +399,7 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< T >& x, const std::vector< T
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_LU() - m_dynamic_state != DYNAMIC_STATE::LU_DECOMPOSED" );
 
 	const size_t max_step{ std::min( m_rows - 1, m_cols ) };
-	std::vector< T > y_alloc;
+	std::vector< DT > y_alloc;
 
 	if( y == nullptr )
 	{
@@ -414,7 +417,7 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< T >& x, const std::vector< T
 		y->at( row ) = b[ p_row ];
 
 		for( size_t col{ 0 }; col < row; ++col )
-			y->at( row ) -= m_matrix[ calc_elem_idx_RLD( p_row, col, m_cols ) ] * y->at( col );
+			y->at( row ) -= static_cast< DT >( m_matrix[ calc_elem_idx_RLD( p_row, col, m_cols ) ] ) * y->at( col );
 	}
 
 	// second solve the equation Ux = y
@@ -424,7 +427,7 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< T >& x, const std::vector< T
 		x[ row ] = y->at( row );
 
 		for( int col{ row + 1 }; col < m_cols; ++col )
-			x[ row ] -= m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] * x[ col ];
+			x[ row ] -= static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] ) * x[ col ];
 
 		x[ row ] /= m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], row, m_cols ) ];
 	}
@@ -432,7 +435,7 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< T >& x, const std::vector< T
 
 
 template< typename T >
-void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T >& b ) const
+void dense_matrix_cuda< T >::solve_QR( std::vector< DT >& x, const std::vector< DT >& b ) const
 {
 	if( b.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR - b.size() != m_rows" );
@@ -447,22 +450,22 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< T >& x, const std::vector< T
 	x = b;
 	for( size_t step{ 0 }; step < max_steps; ++step )
 	{
-		T vTb{ conjugate( m_v_firsts[ step ] ) * x[ step ] };
+		DT vTb{ conjugate( static_cast< DT >( m_v_firsts[ step ] ) ) * x[ step ] };
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTb += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * x[ r ];
+			vTb += conjugate( static_cast< DT >( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) ) * x[ r ];
 
-		x[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vTb;
+		x[ step ] -= static_cast< DT >( m_betas[ step ] * m_v_firsts[ step ] ) * vTb;
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			x[ r ] -= m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] * vTb;
+			x[ r ] -= static_cast< DT >( m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * vTb;
 	}
 
 	// then solve Rx = Q^T * b by back substitution
 	// ============================================
 	for( auto r = static_cast< int >( m_cols ) - 1; r >= 0; --r )
 	{
-		T sum{ T{} };
+		DT sum{ T{} };
 		for( int c{ r + 1 }; c < m_cols; ++c )
-			sum += m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * x[ c ];
+			sum += static_cast< DT >( m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] ) * x[ c ];
 
 		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx_CLD( r, r, m_rows ) ];
 	}
@@ -739,7 +742,7 @@ void dense_matrix_cuda< T >::QR_decomposition( const size_t block_size )
 }
 
 template< typename T >
-void dense_matrix_cuda< T >::count_residual_Ax_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+void dense_matrix_cuda< T >::count_residual_Ax_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const
 {
 	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix< T >::count_residual_Ax_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
@@ -750,24 +753,24 @@ void dense_matrix_cuda< T >::count_residual_Ax_b( const std::vector< T >& x, con
 		r[ row ] = -b[ row ];
 	for( size_t row{ 0 }; row < m_rows; ++row )
 		for( size_t col{ 0 }; col < m_cols; ++col )
-			r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx( row, col ) ] );
+			r[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx( row, col ) ] ) );
 }
 
 template< typename T >
-void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const
 {
 	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_LUx_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
 	if( m_dynamic_state != DYNAMIC_STATE::LU_DECOMPOSED )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_LUx_b - m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED" );
 
-	std::vector< T > w( m_rows, T{} );
+	std::vector< DT > w( m_rows, T{} );
 
 	// compute w=Ux
 	// ============
 	for( size_t row{ 0 }; row < m_rows; ++row )
 		for( size_t col{ row }; col < m_cols; ++col )
-			w[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] );
+			w[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] ) );
 
 
 	// compute r = Lw - b
@@ -777,12 +780,12 @@ void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< T >& x, co
 		r[ m_p_row[ row ] ] = w[ row ] - b[ m_p_row[ row ] ];
 
 		for( size_t col{ 0 }; col < row; ++col )
-			r[ m_p_row[ row ] ] += w[ col ] * m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ];
+			r[ m_p_row[ row ] ] += w[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] );
 	}
 }
 
 template< typename T >
-void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< T >& x, const std::vector< T >& b, std::vector< T >& r ) const
+void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const
 {
 	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_QRx_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
@@ -793,20 +796,20 @@ void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< T >& x, co
 
 	for( size_t row{ 0 }; row < m_rows; ++row )
 	{
-		r[ row ] = T{};
+		r[ row ] = DT{};
 		for( size_t col{ row }; col < m_cols; ++col )
-			r[ row ] += ( x[ col ] * m_matrix[ calc_elem_idx_CLD( row, col, m_rows ) ] );
+			r[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_CLD( row, col, m_rows ) ] ) );
 	}
 
 	for( int step{ max_steps - 1 }; step >= 0; --step )
 	{
-		T vRx{ conjugate( m_v_firsts[ step ] ) * r[ step ] };
+		DT vRx{ conjugate( static_cast< DT >( m_v_firsts[ step ] ) ) * r[ step ] };
 		for( int s{ step + 1 }; s < static_cast< int >( m_rows ); ++s )
-			vRx += conjugate( m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] ) * r[ s ];
+			vRx += conjugate( static_cast< DT >( m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] ) ) * r[ s ];
 
-		r[ step ] -= m_betas[ step ] * m_v_firsts[ step ] * vRx;
+		r[ step ] -= static_cast< DT >( m_betas[ step ] * m_v_firsts[ step ] ) * vRx;
 		for( int s{ step + 1 }; s < static_cast< int >( m_rows ); ++s )
-			r[ s ] -= m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] * vRx;
+			r[ s ] -= static_cast< DT >( m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] ) * vRx;
 	}
 
 	for( size_t row{ 0 }; row < m_rows; ++row )
@@ -814,16 +817,16 @@ void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< T >& x, co
 }
 
 template < typename T >
-void dense_matrix_cuda< T >::iterative_refinement( std::vector< T >& x, const std::vector< T >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig ) const
+void dense_matrix_cuda< T >::iterative_refinement( std::vector< DT >& x, const std::vector< DT >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig ) const
 {
 	if( m_rows < m_cols )
 		throw std::exception( "dense_matrix_cuda< T >::iterative_refinement - m_rows < m_cols" );
 
 	const size_t N = m_rows;
 
-	std::vector< T > d( N );
-	std::vector< T > r( N );
-	std::vector< T > y( N );
+	std::vector< DT > d( N );
+	std::vector< DT > r( N );
+	std::vector< DT > y( N );
 
 	size_t iteration = 0;
 

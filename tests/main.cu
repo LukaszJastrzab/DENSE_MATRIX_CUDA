@@ -4,7 +4,7 @@
 #include <functions.cuh>
 
 using namespace std;
-constexpr double eps_float = 3e-3;
+constexpr double eps_float = 1e-5;
 constexpr double eps_double = 1e-10;
 constexpr double min_double = 0.0001;
 constexpr double max_double = 10000.0;
@@ -22,6 +22,9 @@ template < typename T >
 void decompositions_block_test( const SOLVING_TYPE solving_type, size_t max_block_size = 32 )
 {
 	double val_min{ min_float }, val_max{ max_float }, eps{ eps_float };
+
+	/// double type used in solving / refinement
+	using DT = typename double_type< T >::type;
 
 #ifndef __CUDA_ARCH__
 	if constexpr( std::is_same< typename real_type < T >::type, double >::value )
@@ -50,13 +53,13 @@ void decompositions_block_test( const SOLVING_TYPE solving_type, size_t max_bloc
 				break;
 			}
 
-			vector< T > b( mx_size );
-			vector< T > r( mx_size );
-			vector< T > x( mx_size, T{} );
+			vector< DT > b( mx_size );
+			vector< DT > r( mx_size );
+			vector< DT > x( mx_size, DT{} );
 
 			for( size_t row{ 0 }; row < mx_size; ++row )
 			{
-				b[ row ] = generate_random< T >( val_min, val_max );
+				b[ row ] = generate_random< DT >( val_min, val_max );
 
 				for( size_t col{ 0 }; col < mx_size; ++col )
 					A.set_element( generate_random< T >( val_min, val_max ), row, col );
@@ -131,6 +134,9 @@ void decompositions_big_example( const SOLVING_TYPE solving_type )
 {
 	double val_min{ min_float }, val_max{ max_float }, eps{ eps_float };
 
+	/// double type used in solving / refinement
+	using DT = typename double_type< T >::type;
+
 #ifndef __CUDA_ARCH__
 	if constexpr( std::is_same< typename real_type < T >::type, double >::value )
 #endif
@@ -155,13 +161,13 @@ void decompositions_big_example( const SOLVING_TYPE solving_type )
 		break;
 	}
 
-	vector< T > b( mx_size );
-	vector< T > r( mx_size );
-	vector< T > x( mx_size, T{} );
+	vector< DT > b( mx_size );
+	vector< DT > r( mx_size );
+	vector< DT > x( mx_size, DT{} );
 
 	for( size_t row{ 0 }; row < mx_size; ++row )
 	{
-		b[ row ] = generate_random< T >( val_min, val_max );
+		b[ row ] = generate_random< DT >( val_min, val_max );
 
 		for( size_t col{ 0 }; col < mx_size; ++col )
 			A.set_element( generate_random< T >( val_min, val_max ), row, col );

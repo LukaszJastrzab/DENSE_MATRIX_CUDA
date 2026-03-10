@@ -31,6 +31,19 @@ struct real_type< std::complex< T > >
 };
 
 template< typename T >
+struct double_type
+{
+    using type = double;
+};
+
+template< typename T >
+struct double_type< std::complex< T > >
+{
+    using type = std::complex< double >;
+};
+
+
+template< typename T >
 #ifdef __CUDACC__
 __host__ __device__ __forceinline__
 #else
@@ -110,6 +123,12 @@ template< typename T >
 struct real_type< thrust::complex< T > >
 {
     using type = T;
+};
+
+template< typename T >
+struct double_type< thrust::complex< T > >
+{
+    using type = thrust::complex< double >;
 };
 
 template< typename T >
