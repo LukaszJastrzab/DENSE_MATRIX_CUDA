@@ -6,6 +6,8 @@
 #include <numeric>
 
 #include <thrust/complex.h>
+#include <thrust/device_ptr.h>
+#include <thrust/extrema.h>
 #include <cublas_v2.h>
 
 #include "utilities.cuh"
@@ -74,7 +76,10 @@ private:
 	void count_residual_Ax_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	void count_residual_LUx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	void count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
-
+	/// rows scaling
+	void rows_scaling( T* d_A );
+	/// cols scaling
+	void cols_scaling( T* d_A );
 
 private:
 	/// current state of matrix
@@ -91,6 +96,9 @@ private:
 	std::vector< T > m_betas, m_v_firsts;
 	/// row permutation
 	std::vector< size_t > m_p_row;
+
+	/// row / column scaling parameters
+	std::vector< double > m_scalars;
 
 };
 
@@ -881,4 +889,85 @@ void dense_matrix_cuda< T >::iterative_refinement( std::vector< DT >& x, const s
 		else
 			break;
 	}
+}
+
+
+//template< typename T >
+//__global__
+//void scaling_compute_row_norms( double* d_scalars,
+//	T* d_A,
+//	const int A_rows,
+//	const int A_cols
+// )
+//{
+//	const int row = threadIdx.x + blockDim.x * blockIdx.x;
+//
+//	if( row >= A_rows )
+//		return;
+//
+//	T sum{};
+//	for( int col{ 0 }; col < A_cols; ++col )
+//		sum += abs_val( d_A[ calc_elem_idx_RLD( row, col, A_cols ) ] );
+//
+//	d_scalars[ row ] = sum;
+//}
+
+
+template< typename T >
+__global__
+void scaling_compute_row_norms( double* d_scalars,
+	T* d_A,
+	const int A_rows,
+	const int A_cols
+)
+{
+	extern __shared__ double sdata[];
+
+	const int row = blockIdx.x;
+	const int tid = threadIdx.x;
+
+	double sum{};
+
+	for( int j = tid; j < A_cols; j += blockDim.x )
+		sum += abs_val( d_A[ calc_elem_idx_RLD( row, j, A_cols ) ] );
+
+	sdata[ tid ] = sum;
+
+	__syncthreads();
+
+	for( int s = blockDim.x / 2; s > 0; s >>= 1 )
+	{
+		if( tid < s )
+			sdata[ tid ] += sdata[ tid + s ];
+
+		__syncthreads();
+	}
+
+	if( tid == 0 )
+		d_scalars[ row ] = sdata[ 0 ];
+}
+
+template < typename T >
+void dense_matrix_cuda< T >::rows_scaling( T* d_A )
+{
+	double* d_scalars{ nullptr };
+	cudaMalloc( &d_scalars, m_rows * sizeof( double ) );
+
+	int threads{ 256 };
+	scaling_compute_row_norms <<< m_rows, threads, threads * sizeof( double ) >>> ( d_scalars, d_A, m_rows, m_cols );
+
+	thrust::device_ptr< double > ptr( d_scalars );
+	thrust::device_ptr< double > max_it = thrust::max_element( ptr, ptr + m_rows );
+
+
+
+
+	cudaMemcpy( m_scalars.data(), d_scalars, m_rows * sizeof( double ), cudaMemcpyDeviceToHost );
+	cudaFree( d_scalars );
+}
+
+template < typename T >
+void dense_matrix_cuda< T >::cols_scaling( T* d_A )
+{
+
 }
