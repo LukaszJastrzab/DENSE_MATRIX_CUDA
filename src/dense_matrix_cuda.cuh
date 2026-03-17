@@ -57,11 +57,11 @@ public:
 
 	/// decomposes matrix "in situ" to factors LU using Gauss elimination using CUDA
 	/// with partial pivoting (one column search)
-	void LU_decomposition( const size_t block_size = 32 );
+	void LU_decomposition( bool scaling, const size_t block_size = 32 );
 	/// solves equation Ax=b, where A is decomposed to factors LU (by Gauss elimination)
 	void solve_LU( std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >* y = nullptr ) const;
 
-private:
+//private:
 	/// function calculates index in one of initial matrix state
 	size_t calc_elem_idx( size_t row, size_t col ) const;
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
@@ -334,7 +334,7 @@ void LU_Schur_complement(
 }
 
 template< typename T >
-void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
+void dense_matrix_cuda< T >::LU_decomposition( bool scaling, const size_t block_size )
 {
 	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition() - m_dynamic_state != DYNAMIC_STATE::ROL_INIT" );
@@ -354,6 +354,25 @@ void dense_matrix_cuda< T >::LU_decomposition( const size_t block_size )
 
 	const size_t max_steps{ std::min( m_rows - 1, m_cols ) };
 	size_t step_offset{ 0 }, col_offset{ 0 };
+
+	if( scaling )
+	{
+		rows_scaling( d_matrix );
+
+		cudaMemcpy2D(
+			m_matrix.data(),                                 // dst
+			m_cols * sizeof( T ),                            // pitch dst
+			d_matrix,                                        // src
+			m_cols * sizeof( T ),                            // pitch src
+			std::min( block_size, m_cols ) * sizeof( T ),    // bytes per row
+			m_rows,                                          // all rows
+			cudaMemcpyDeviceToHost
+		);
+
+		//cudaMemcpy( m_matrix.data(), d_matrix, m_cols * m_rows * sizeof( T ), cudaMemcpyDeviceToHost );
+	}
+	else
+		m_scalars.resize( m_rows, 1.0 );
 
 	while( step_offset < max_steps )
 	{
@@ -417,12 +436,12 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< DT >& x, const std::vector< 
 
 	// first solve the equation Ly = b
 	// ===============================
-	y->at( 0 ) = b[ m_p_row[ 0 ] ];
+	y->at( 0 ) = ( b[ m_p_row[ 0 ] ] * static_cast< DT >( m_scalars[ m_p_row[ 0 ] ] ) );
 
 	for( size_t row{ 1 }; row < m_cols; ++row )
 	{
 		const int p_row = m_p_row[ row ];
-		y->at( row ) = b[ p_row ];
+		y->at( row ) = ( b[ p_row ] * static_cast< DT >( m_scalars[ p_row ] ) );
 
 		for( size_t col{ 0 }; col < row; ++col )
 			y->at( row ) -= static_cast< DT >( m_matrix[ calc_elem_idx_RLD( p_row, col, m_cols ) ] ) * y->at( col );
@@ -785,10 +804,12 @@ void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< DT >& x, c
 	// ==================
 	for( size_t row{ 0 }; row < m_rows; ++row )
 	{
-		r[ m_p_row[ row ] ] = w[ row ] - b[ m_p_row[ row ] ];
+		r[ m_p_row[ row ] ] = w[ row ] - ( b[ m_p_row[ row ] ] * static_cast< DT >( m_scalars[ m_p_row[ row ] ] ) );
 
 		for( size_t col{ 0 }; col < row; ++col )
 			r[ m_p_row[ row ] ] += w[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] );
+
+		r[ m_p_row[ row ] ] /= static_cast< DT >( m_scalars[ m_p_row[ row ] ] );
 	}
 }
 
@@ -894,18 +915,14 @@ void dense_matrix_cuda< T >::iterative_refinement( std::vector< DT >& x, const s
 
 //template< typename T >
 //__global__
-//void scaling_compute_row_norms( double* d_scalars,
-//	T* d_A,
-//	const int A_rows,
-//	const int A_cols
-// )
+//void scaling_compute_row_norms( double* d_scalars, const T* d_A, const int A_rows, const int A_cols )
 //{
 //	const int row = threadIdx.x + blockDim.x * blockIdx.x;
 //
 //	if( row >= A_rows )
 //		return;
 //
-//	T sum{};
+//	double sum{};
 //	for( int col{ 0 }; col < A_cols; ++col )
 //		sum += abs_val( d_A[ calc_elem_idx_RLD( row, col, A_cols ) ] );
 //
@@ -915,11 +932,7 @@ void dense_matrix_cuda< T >::iterative_refinement( std::vector< DT >& x, const s
 
 template< typename T >
 __global__
-void scaling_compute_row_norms( double* d_scalars,
-	T* d_A,
-	const int A_rows,
-	const int A_cols
-)
+void scaling_compute_row_norms( double* d_scalars, const T* d_A, const int A_cols )
 {
 	extern __shared__ double sdata[];
 
@@ -947,21 +960,43 @@ void scaling_compute_row_norms( double* d_scalars,
 		d_scalars[ row ] = sdata[ 0 ];
 }
 
+template< typename T >
+__global__
+void matrix_row_scaling( double* d_scalars, const double max_scalar, T* d_A, const int A_rows, const int A_cols )
+{
+	const int col = threadIdx.x + blockIdx.x * blockDim.x;
+	const int row = threadIdx.y + blockIdx.y * blockDim.y;
+
+	if( threadIdx.x == 0 && row < A_rows )
+		d_scalars[ row ] = max_scalar / d_scalars[ row ];
+
+	__syncthreads();
+
+	if( col >= A_cols || row >= A_rows )
+		return;
+
+	d_A[ calc_elem_idx_RLD( row, col, A_cols ) ] *= static_cast< T >( d_scalars[ row ] );
+}
+
 template < typename T >
 void dense_matrix_cuda< T >::rows_scaling( T* d_A )
 {
 	double* d_scalars{ nullptr };
 	cudaMalloc( &d_scalars, m_rows * sizeof( double ) );
 
+	//scaling_compute_row_norms <<< div_up( m_rows, 256 ), 256 >>> ( d_scalars, d_A, m_rows, m_cols );
+
 	int threads{ 256 };
-	scaling_compute_row_norms <<< m_rows, threads, threads * sizeof( double ) >>> ( d_scalars, d_A, m_rows, m_cols );
+	scaling_compute_row_norms <<< m_rows, threads, threads * sizeof( double ) >>> ( d_scalars, d_A, m_cols );
 
 	thrust::device_ptr< double > ptr( d_scalars );
-	thrust::device_ptr< double > max_it = thrust::max_element( ptr, ptr + m_rows );
+	thrust::device_ptr< double > max_scalar = thrust::max_element( ptr, ptr + m_rows );
 
+	dim3 block( 16, 16 );
+	dim3 grid( div_up( m_cols, block.x ), div_up( m_rows, block.y ) );
+	matrix_row_scaling <<< grid, block >>> ( d_scalars, *max_scalar, d_A, m_rows, m_cols );
 
-
-
+	m_scalars.resize( m_rows );
 	cudaMemcpy( m_scalars.data(), d_scalars, m_rows * sizeof( double ), cudaMemcpyDeviceToHost );
 	cudaFree( d_scalars );
 }
