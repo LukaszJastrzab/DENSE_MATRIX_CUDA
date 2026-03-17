@@ -185,26 +185,13 @@ void decompositions_big_example( const SOLVING_TYPE solving_type )
 	switch( solving_type )
 	{
 	case SOLVING_TYPE::QR_decomposition:
-		A.QR_decomposition();
+		A.QR_decomposition( true );
 		break;
 
 	case SOLVING_TYPE::LU_decomposition:
 		A.LU_decomposition( true );
 		break;
 	}
-
-	// test
-	//A.solve_LU( x, b );
-	//A.solve_LU( x, b );
-	//x.resize( mx_size, T{0} );
-	//AA.count_residual_LUx_b( x, b, r );
-	//x.resize( mx_size, T{0} );
-	//A.count_residual_LUx_b( x, b, r );
-	// test
-
-	//x.resize( mx_size, T{0.0} );
-	//AA.iterative_refinement( x, b, 0.000000000001, 1000 );
-	//AA_.count_residual_vector( x, b, r );
 
 	A.iterative_refinement( x, b, 0.000000000001, 1000 );
 	A.count_residual_vector( x, b, r );
@@ -213,25 +200,25 @@ void decompositions_big_example( const SOLVING_TYPE solving_type )
 
 }
 
-//TEST( big_non_singular_linear_equation_float, QR_decomposition_blocked_Householder )
-//{
-//	decompositions_big_example< float >( SOLVING_TYPE::QR_decomposition );
-//}
-//
-//TEST( big_non_singular_linear_equation_double, QR_decomposition_blocked_Householder )
-//{
-//	decompositions_big_example< double >( SOLVING_TYPE::QR_decomposition );
-//}
-//
-//TEST( big_non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder )
-//{
-//	decompositions_big_example< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition );
-//}
-//
-//TEST( big_non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder )
-//{
-//	decompositions_big_example< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition );
-//}
+TEST( big_non_singular_linear_equation_float, QR_decomposition_blocked_Householder )
+{
+	decompositions_big_example< float >( SOLVING_TYPE::QR_decomposition );
+}
+
+TEST( big_non_singular_linear_equation_double, QR_decomposition_blocked_Householder )
+{
+	decompositions_big_example< double >( SOLVING_TYPE::QR_decomposition );
+}
+
+TEST( big_non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder )
+{
+	decompositions_big_example< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition );
+}
+
+TEST( big_non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder )
+{
+	decompositions_big_example< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition );
+}
 
 
 TEST( big_non_singular_linear_equation_float, LU_decomposition_blocked_Gauss )

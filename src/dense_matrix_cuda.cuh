@@ -51,7 +51,7 @@ public:
 	void iterative_refinement( std::vector< DT >& x, const std::vector< DT >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig = nullptr ) const;
 
 	/// performs blocked QR decomposition by Householder algorithm "in situ" using CUDA
-	void QR_decomposition( const size_t block_size = 8 );
+	void QR_decomposition( bool scaling, const size_t block_size = 8 );
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
 	void solve_QR( std::vector< DT >& x, const std::vector< DT >& b ) const;
 
@@ -676,7 +676,7 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 
 
 template< typename T >
-void dense_matrix_cuda< T >::QR_decomposition( const size_t block_size )
+void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_size )
 {
 	if( m_dynamic_state != DYNAMIC_STATE::COL_INIT )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::COL_INIT" );
@@ -691,6 +691,13 @@ void dense_matrix_cuda< T >::QR_decomposition( const size_t block_size )
 
 	cudaMalloc( &d_matrix, m_matrix.size() * sizeof( T ) );
 	cudaMemcpy( d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
+
+	if( scaling )
+		cols_scaling( d_matrix );
+
+	// to be optimized
+	cudaMemcpy( m_matrix.data(), d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
+	// to be optimized
 
 	cudaMalloc( &d_v_firsts, max_steps * sizeof( T ) );
 
@@ -977,12 +984,15 @@ void matrix_scaling( double* d_scalars, const double max_scalar, T* d_A, const i
 	if( md >= md_size || ld >= ld_size )
 		return;
 
-	d_A[ calc_elem_idx_RLD( ld, md, md_size ) ] *= static_cast< T >( d_scalars[ ld ] );
+	d_A[ ld * md_size + md ] *= static_cast< T >( d_scalars[ ld ] );
 }
 
 template < typename T >
 void dense_matrix_cuda< T >::rows_scaling( T* d_A )
 {
+	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::rows_scaling - m_dynamic_state != DYNAMIC_STATE::ROL_INIT" );
+
 	double* d_scalars{ nullptr };
 	cudaMalloc( &d_scalars, m_rows * sizeof( double ) );
 
@@ -1006,5 +1016,23 @@ void dense_matrix_cuda< T >::rows_scaling( T* d_A )
 template < typename T >
 void dense_matrix_cuda< T >::cols_scaling( T* d_A )
 {
+	if( m_dynamic_state != DYNAMIC_STATE::COL_INIT )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::cols_scaling - m_dynamic_state != DYNAMIC_STATE::COL_INIT" );
 
+	double* d_scalars{ nullptr };
+	cudaMalloc( &d_scalars, m_cols * sizeof( double ) );
+
+	int threads{ 256 };
+	scaling_compute_norms <<< m_cols, threads, threads * sizeof( double ) >>> ( d_scalars, d_A, m_rows );
+
+	thrust::device_ptr< double > ptr( d_scalars );
+	thrust::device_ptr< double > max_scalar = thrust::max_element( ptr, ptr + m_cols );
+
+	dim3 block( 16, 16 );
+	dim3 grid( div_up( m_rows, block.x ), div_up( m_cols, block.y ) );
+	matrix_scaling <<< grid, block >>> ( d_scalars, *max_scalar, d_A, m_cols, m_rows );
+
+	m_scalars.resize( m_cols );
+	cudaMemcpy( m_scalars.data(), d_scalars, m_cols * sizeof( double ), cudaMemcpyDeviceToHost );
+	cudaFree( d_scalars );
 }
