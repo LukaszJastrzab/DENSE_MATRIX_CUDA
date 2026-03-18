@@ -368,8 +368,6 @@ void dense_matrix_cuda< T >::LU_decomposition( bool scaling, const size_t block_
 			m_rows,                                          // all rows
 			cudaMemcpyDeviceToHost
 		);
-
-		//cudaMemcpy( m_matrix.data(), d_matrix, m_cols * m_rows * sizeof( T ), cudaMemcpyDeviceToHost );
 	}
 	else
 		m_scalars.resize( m_rows, 1.0 );
@@ -496,6 +494,9 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< DT >& x, const std::vector< 
 
 		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx_CLD( r, r, m_rows ) ];
 	}
+
+	for( size_t c{ 0 }; c < m_cols; ++c )
+		x[ c ] *= static_cast< DT >( m_scalars[ c ] );
 }
 
 
@@ -693,11 +694,12 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 	cudaMemcpy( d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 
 	if( scaling )
+	{
 		cols_scaling( d_matrix );
-
-	// to be optimized
-	cudaMemcpy( m_matrix.data(), d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToHost );
-	// to be optimized
+		cudaMemcpy( m_matrix.data(), d_matrix, std::min( block_size, m_rows ) * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
+	}
+	else
+		m_scalars.resize( m_cols, 1.0 );
 
 	cudaMalloc( &d_v_firsts, max_steps * sizeof( T ) );
 
@@ -834,7 +836,8 @@ void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< DT >& x, c
 	{
 		r[ row ] = DT{};
 		for( size_t col{ row }; col < m_cols; ++col )
-			r[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_CLD( row, col, m_rows ) ] ) );
+			r[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_CLD( row, col, m_rows ) ] )
+				/ static_cast< DT >( m_scalars[ col ] ) );
 	}
 
 	for( int step{ max_steps - 1 }; step >= 0; --step )
@@ -920,23 +923,6 @@ void dense_matrix_cuda< T >::iterative_refinement( std::vector< DT >& x, const s
 }
 
 
-//template< typename T >
-//__global__
-//void scaling_compute_row_norms( double* d_scalars, const T* d_A, const int A_rows, const int A_cols )
-//{
-//	const int row = threadIdx.x + blockDim.x * blockIdx.x;
-//
-//	if( row >= A_rows )
-//		return;
-//
-//	double sum{};
-//	for( int col{ 0 }; col < A_cols; ++col )
-//		sum += abs_val( d_A[ calc_elem_idx_RLD( row, col, A_cols ) ] );
-//
-//	d_scalars[ row ] = sum;
-//}
-
-
 template< typename T >
 __global__
 void scaling_compute_norms( double* d_scalars, const T* d_A, const int md_size )
@@ -971,15 +957,10 @@ void scaling_compute_norms( double* d_scalars, const T* d_A, const int md_size )
 
 template< typename T >
 __global__
-void matrix_scaling( double* d_scalars, const double max_scalar, T* d_A, const int ld_size, const int md_size )
+void matrix_scaling( double* d_scalars, T* d_A, const int ld_size, const int md_size )
 {
 	const int md = threadIdx.x + blockIdx.x * blockDim.x;
 	const int ld = threadIdx.y + blockIdx.y * blockDim.y;
-
-	if( threadIdx.x == 0 && ld < ld_size )
-		d_scalars[ ld ] = max_scalar / d_scalars[ ld ];
-
-	__syncthreads();
 
 	if( md >= md_size || ld >= ld_size )
 		return;
@@ -996,17 +977,16 @@ void dense_matrix_cuda< T >::rows_scaling( T* d_A )
 	double* d_scalars{ nullptr };
 	cudaMalloc( &d_scalars, m_rows * sizeof( double ) );
 
-	//scaling_compute_row_norms <<< div_up( m_rows, 256 ), 256 >>> ( d_scalars, d_A, m_rows, m_cols );
-
 	int threads{ 256 };
 	scaling_compute_norms <<< m_rows, threads, threads * sizeof( double ) >>> ( d_scalars, d_A, m_cols );
 
 	thrust::device_ptr< double > ptr( d_scalars );
-	thrust::device_ptr< double > max_scalar = thrust::max_element( ptr, ptr + m_rows );
+	double max_scalar = *thrust::max_element( ptr, ptr + m_rows );
+	thrust::transform( ptr, ptr + m_cols, ptr, [ = ] __device__( double x ) { return max_scalar / x; } );
 
 	dim3 block( 16, 16 );
 	dim3 grid( div_up( m_cols, block.x ), div_up( m_rows, block.y ) );
-	matrix_scaling <<< grid, block >>> ( d_scalars, *max_scalar, d_A, m_rows, m_cols );
+	matrix_scaling <<< grid, block >>> ( d_scalars, d_A, m_rows, m_cols );
 
 	m_scalars.resize( m_rows );
 	cudaMemcpy( m_scalars.data(), d_scalars, m_rows * sizeof( double ), cudaMemcpyDeviceToHost );
@@ -1026,11 +1006,12 @@ void dense_matrix_cuda< T >::cols_scaling( T* d_A )
 	scaling_compute_norms <<< m_cols, threads, threads * sizeof( double ) >>> ( d_scalars, d_A, m_rows );
 
 	thrust::device_ptr< double > ptr( d_scalars );
-	thrust::device_ptr< double > max_scalar = thrust::max_element( ptr, ptr + m_cols );
+	double max_scalar = *thrust::max_element( ptr, ptr + m_cols );
+	thrust::transform( ptr, ptr + m_cols, ptr, [ = ] __device__( double x ) { return max_scalar / x; } );
 
 	dim3 block( 16, 16 );
 	dim3 grid( div_up( m_rows, block.x ), div_up( m_cols, block.y ) );
-	matrix_scaling <<< grid, block >>> ( d_scalars, *max_scalar, d_A, m_cols, m_rows );
+	matrix_scaling <<< grid, block >>> ( d_scalars, d_A, m_cols, m_rows );
 
 	m_scalars.resize( m_cols );
 	cudaMemcpy( m_scalars.data(), d_scalars, m_cols * sizeof( double ), cudaMemcpyDeviceToHost );

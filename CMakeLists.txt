@@ -13,6 +13,7 @@ FetchContent_Declare(
 )
 
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda")
 
 FetchContent_MakeAvailable( googletest )
 
