@@ -3,8 +3,6 @@
 #include <dense_matrix_cuda.cuh>
 #include <functions.cuh>
 
-#include <dense_matrix.hpp>
-
 using namespace std;
 constexpr double eps_float = 1e-5;
 constexpr double eps_double = 1e-10;
@@ -193,7 +191,6 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 	size_t mx_size{ 5 };
 
 	dense_matrix_cuda< T > A;
-	dense_matrix< T > AA( mx_size, mx_size ), AA_;
 
 	switch( solving_type )
 	{
@@ -218,11 +215,8 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 		{
 			auto val = generate_random< T >( val_min, val_max );
 			A.set_element( val, row, col );
-			AA.set_element( val, row, col );
 		}
 	}
-
-	AA_ = AA;
 
 	switch( solving_type )
 	{
