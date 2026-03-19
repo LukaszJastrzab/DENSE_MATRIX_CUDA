@@ -30,15 +30,17 @@ class dense_matrix_cuda
 public:
 	/// constructors
 	dense_matrix_cuda() = default;
-	dense_matrix_cuda( const dense_matrix_cuda& );
+	dense_matrix_cuda( const dense_matrix_cuda& ) = default;
 	dense_matrix_cuda( dense_matrix_cuda&& ) = default;
 	dense_matrix_cuda( DYNAMIC_STATE init_state, size_t rows, size_t cols );
 
 	/// destructor
-	~dense_matrix_cuda();
+	~dense_matrix_cuda() = default;
 
-	/// double type used in solving / refinement
+	/// double type used in this template
 	using DT = typename double_type< T >::type;
+	/// real type used in this template
+	using RT = typename real_type< T >::type;
 
 	/// sets matrix sizes and allocates memory
 	void init( DYNAMIC_STATE init_state, size_t rows, size_t cols );
@@ -60,8 +62,12 @@ public:
 	void LU_decomposition( bool scaling, const size_t block_size = 32 );
 	/// solves equation Ax=b, where A is decomposed to factors LU (by Gauss elimination)
 	void solve_LU( std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >* y = nullptr ) const;
+	/// rows scaling
+	void rows_scaling( T* d_A );
+	/// cols scaling
+	void cols_scaling( T* d_A );
 
-//private:
+private:
 	/// function calculates index in one of initial matrix state
 	size_t calc_elem_idx( size_t row, size_t col ) const;
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
@@ -76,10 +82,6 @@ public:
 	void count_residual_Ax_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	void count_residual_LUx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	void count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
-	/// rows scaling
-	void rows_scaling( T* d_A );
-	/// cols scaling
-	void cols_scaling( T* d_A );
 
 private:
 	/// current state of matrix
@@ -136,23 +138,6 @@ template< typename T >
 dense_matrix_cuda< T >::dense_matrix_cuda( DYNAMIC_STATE init_state, size_t rows, size_t cols )
 {
 	init( init_state, rows, cols );
-}
-
-
-template< typename T >
-dense_matrix_cuda< T >::dense_matrix_cuda( const dense_matrix_cuda& A )
-	:
-	m_dynamic_state( A.m_dynamic_state ),
-	m_rows( A.m_rows ),
-	m_cols( A.m_cols ),
-	m_matrix( A.m_matrix )
-{
-}
-
-
-template< typename T >
-dense_matrix_cuda< T >::~dense_matrix_cuda()
-{
 }
 
 
@@ -535,8 +520,6 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 template< typename T >
 void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps )
 {
-	using real_t = typename real_type< T >::type;
-
 	size_t block_end{ block_size + step_offset };
 	size_t l_max_steps{ std::min( max_steps, block_end ) };
 	size_t l_max_col{ std::min( block_end, m_cols ) };
@@ -562,7 +545,7 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 
 		double alpha_abs = abs_val( m_matrix[ step_idx ] );
 		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ step_idx ] ) / alpha_abs : T{ -1 } );
-		T sign_norm = sign * T{ static_cast< real_t >( col_norm ) };
+		T sign_norm = sign * T{ static_cast< RT >( col_norm ) };
 
 		m_v_firsts[ step ] = m_matrix[ step_idx ] - sign_norm;
 
