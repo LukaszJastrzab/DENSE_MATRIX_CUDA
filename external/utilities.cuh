@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <complex>
 
@@ -7,6 +9,13 @@
 #include <thrust/complex.h>
 #include <cublas_v2.h>
 #endif
+
+class singularity_error : public std::runtime_error
+{
+public:
+    explicit singularity_error( const std::string& msg )
+        : std::runtime_error( msg ) {}
+};
 
 #ifdef __CUDACC__
 __host__ __device__ __forceinline__
@@ -41,7 +50,6 @@ struct double_type< std::complex< T > >
 {
     using type = std::complex< double >;
 };
-
 
 template< typename T >
 #ifdef __CUDACC__
