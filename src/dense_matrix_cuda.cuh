@@ -21,7 +21,9 @@ enum class DYNAMIC_STATE : int
 	ROL_INIT,
 	COL_INIT,
 	LU_DECOMPOSED,
-	QR_DECOMPOSED
+	QR_DECOMPOSED,
+	QHQ_DECOMPOSED,
+	QUASI_QR
 };
 
 template< typename T >
@@ -67,6 +69,9 @@ public:
 	/// cols scaling
 	void cols_scaling( T* d_A );
 
+	/// performs blocked QHQ decomposition using Householder algorithm, H is in Hessenberg form
+	void QHQ_decomposition( const size_t block_size = 8 );
+
 private:
 	/// function calculates index in one of initial matrix state
 	size_t calc_elem_idx( size_t row, size_t col ) const;
@@ -76,6 +81,8 @@ private:
 	void QR_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps );
 	/// decomposes block on cpu
 	void LU_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps );
+	/// decomposes block on cpu to QHQ, where H is in Hessenber form
+	void QHQ_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps );
 	/// partial pivoting for Gauss elimination
 	void choose_pivot( const size_t step );
 	/// counts residual vector functions that depends of dynamic matrix state
@@ -323,9 +330,8 @@ void dense_matrix_cuda< T >::LU_decomposition( bool scaling, const size_t block_
 {
 	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition() - m_dynamic_state != DYNAMIC_STATE::ROL_INIT" );
-
-	if( m_rows < m_cols )
-		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition: m_rows < m_cols" );
+	if( m_rows != m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition: m_rows != m_cols" );
 
 	m_p_row.resize( m_rows );
 	std::iota( m_p_row.begin(), m_p_row.end(), 0 );
@@ -337,7 +343,7 @@ void dense_matrix_cuda< T >::LU_decomposition( bool scaling, const size_t block_
 	cudaMemcpy( d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 	cudaMalloc( &d_p_row, m_rows * sizeof( size_t ) );
 
-	const size_t max_steps{ std::min( m_rows - 1, m_cols ) };
+	const size_t max_steps{ m_rows - 1 };
 	size_t step_offset{ 0 }, col_offset{ 0 };
 
 	if( scaling )
@@ -404,11 +410,9 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< DT >& x, const std::vector< 
 {
 	if( b.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_LU - b.size() != m_rows" );
-
 	if( m_dynamic_state != DYNAMIC_STATE::LU_DECOMPOSED )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_LU() - m_dynamic_state != DYNAMIC_STATE::LU_DECOMPOSED" );
 
-	const size_t max_step{ std::min( m_rows - 1, m_cols ) };
 	std::vector< DT > y_alloc;
 
 	if( y == nullptr )
@@ -449,11 +453,10 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< DT >& x, const std::vector< 
 {
 	if( b.size() != m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR - b.size() != m_rows" );
-
 	if( m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::solve_QR() - m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED" );
 
-	auto max_steps = std::min( m_rows - 1, m_cols );
+	auto max_steps{ m_rows - 1 };
 
 	// first x := Q^T * b = H_1 * H_2 * ... * H_k * b
 	// ==============================================
@@ -516,6 +519,154 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 	}
 }
 
+template< typename T >
+void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps )
+{	// 	const auto max_steps = m_rows - 2;
+	size_t block_end{ block_size + step_offset };
+	size_t l_max_steps{ std::min( max_steps, block_end ) };
+	size_t l_max_col{ std::min( block_end, m_cols ) };
+
+	std::vector< T > Av( m_rows, T{} ), vTA( l_max_col, T{} );
+
+	for( size_t step{ step_offset }; step < l_max_steps; ++step )
+	{
+		double col_norm{ 0.0 };
+		const size_t row_step{ step + 1 };
+
+		// calcualte norm
+		// ==============
+		for( size_t r{ row_step }; r < m_rows; ++r )
+		{
+			double abs_v = abs_val( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] );
+			col_norm += abs_v * abs_v;
+		}
+		col_norm = std::sqrt( col_norm );
+
+		// stabilization sign calculation
+		// ==============================
+		auto lead_elem_idx{ calc_elem_idx_CLD( row_step, step, m_rows ) };
+		double alpha_abs = abs_val( m_matrix[ lead_elem_idx ] );
+		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ lead_elem_idx ] ) / T{ static_cast< RT >( alpha_abs ) } : T{ -1 } );
+		T sign_norm = sign * T{ static_cast< RT >( col_norm ) };
+
+		m_v_firsts[ step ] = m_matrix[ lead_elem_idx ] - sign_norm;
+		const auto v1{ m_v_firsts[ step ] };
+		const auto v1T{ conjugate( v1 ) };
+
+		T vTv{ v1T * v1 };
+		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
+		{
+			const auto elem_idx{ calc_elem_idx_CLD( r, step, m_rows ) };
+			vTv += conjugate( m_matrix[ elem_idx ] ) * m_matrix[ elem_idx ];
+		}
+
+		if( vTv == T{ 0 } )
+		{
+			m_betas[ step ] = T{ 0 };
+			continue;
+		}
+
+		m_betas[ step ] = static_cast< RT >( 2.0 ) / vTv;
+		const auto beta{ m_betas[ step ] };
+
+		// calculate Av
+		//=============
+		for( size_t r{ 0 }; r < m_rows; ++r )
+		{
+			Av[ r ] = m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] * v1;
+			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
+				Av[ r ] += m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ];
+		}
+
+		// calculate vTA ( v*A in case of complex )
+		// ========================================
+		for( size_t c{ step }; c < l_max_col; ++c )
+		{			
+			vTA[ c ] = v1T * m_matrix[ calc_elem_idx_CLD( row_step, c, m_rows ) ];
+			for( size_t r{ row_step + 1 }; r < m_rows; ++r )
+				vTA[ c ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ];
+		}
+
+		// alpha = v*Av
+		// ============
+		T alpha{ v1T * Av[ row_step ] };
+		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
+			alpha += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * Av[ r ];
+
+
+		// apply the Householder transformation QAQ to the remaining submatrix
+		// only needed operations "in situ"
+		// ===================================================================		
+		m_matrix[ lead_elem_idx ] = sign_norm;
+
+		// update those part of matrix that are changed only by right mult by QT
+		// =====================================================================
+		for( size_t r{ 0 }; r < row_step; ++r )
+		{
+			const auto Av_{ Av[ r ] };			
+			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * Av_ * v1T;
+
+			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
+				m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= beta * Av_ * conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] );
+		}
+
+		// update left-upper corner of submatrix
+		// =====================================		
+		m_matrix[ calc_elem_idx_CLD( row_step, row_step, m_rows ) ] -=
+			beta * ( v1 * vTA[ row_step ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
+
+		// update fiest modificated sub row
+		// ================================
+		for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
+		{
+			const auto v1T{ conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] ) };			
+			m_matrix[ calc_elem_idx_CLD( row_step, c, m_rows ) ] -= beta * ( v1 * vTA[ c ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
+		}
+
+		// update fiest modificated sub col
+		// ================================
+		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
+		{
+			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };			
+			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * ( v1 * vTA[ row_step ] + Av[ r ] * v1T - beta * alpha * v1 * v1T );
+		}
+
+		// update rest part of sub matrix
+		// ==============================
+		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
+		{
+			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };
+			const auto Av_{ Av[ r ] };
+
+			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
+			{
+				const auto v1T{ conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] ) };
+				m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= beta * ( v1 * vTA[ c ] + Av_ * v1T - beta * alpha * v1 * v1T );
+			}
+		}
+	}
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
+{
+	if( m_dynamic_state != DYNAMIC_STATE::COL_INIT )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::COL_INIT" );
+	if( m_rows != m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::QHQ_decomposition() - m_rows != m_cols" );
+
+	const auto max_steps{ m_rows - 2 };
+	//size_t step_offset{ 0 }, row_offset{ 0 };
+
+	m_betas.resize( max_steps );
+	m_v_firsts.resize( max_steps );
+
+	QHQ_block_decomposition_cpu( block_size, 0, max_steps );
+
+	// to do
+
+	m_dynamic_state = DYNAMIC_STATE::QHQ_DECOMPOSED;
+}
 
 template< typename T >
 void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps )
@@ -658,14 +809,15 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 	A_out[ calc_elem_idx_CLD( row, col, A_rows ) ] -= sum;
 }
 
-
 template< typename T >
 void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_size )
 {
 	if( m_dynamic_state != DYNAMIC_STATE::COL_INIT )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::COL_INIT" );
+	if( m_rows != m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() -  m_rows != m_cols" );
 
-	const auto max_steps{ std::min( m_rows - 1, m_cols ) };
+	const auto max_steps{ m_rows - 1 };
 	size_t step_offset{ 0 }, row_offset{ 0 };
 
 	m_betas.resize( max_steps );
@@ -813,7 +965,7 @@ void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< DT >& x, c
 	if( m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_QRx_b - m_dynamic_state != DYNAMIC_STATE::QR_DECOMPOSED" );
 
-	const int max_steps = std::min( m_rows - 1, m_cols );
+	const int max_steps{ static_cast< int >( m_rows ) - 1 };
 
 	for( size_t row{ 0 }; row < m_rows; ++row )
 	{

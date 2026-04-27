@@ -12,6 +12,37 @@ constexpr double min_float = 0.01;
 constexpr double max_float = 100.0;
 
 
+// test
+#include <dense_matrix.hpp>
+
+TEST( general_eigen_values_problem, eigen_test )
+{
+	double val_min{ min_double }, val_max{ max_double };
+
+	size_t mx_size{ 7 };
+
+	dense_matrix_cuda< double > A;
+	A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
+
+	dm::dense_matrix< double > A_;
+	A_.init( mx_size, mx_size );
+
+	for( size_t row{ 0 }; row < mx_size; ++row )
+	{
+		for( size_t col{ 0 }; col < mx_size; ++col )
+		{
+			auto val{ generate_random< double >( val_min, val_max ) };
+			A.set_element( val, row, col );
+			A_.set_element( val, row, col );
+		}
+	}
+
+	A_.QHQ_decomposition();
+	A.QHQ_decomposition( 4 );
+}
+// test
+
+
 enum class SOLVING_TYPE : uint8_t
 {
 	QR_decomposition,
@@ -316,4 +347,3 @@ TEST( big_non_singular_linear_equation_complex_double, LU_decomposition_blocked_
 {
 	decompositions_big_example< thrust::complex< double > >( SOLVING_TYPE::LU_decomposition, true );
 }
-
