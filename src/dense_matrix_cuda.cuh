@@ -560,13 +560,12 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 			vTv += conjugate( m_matrix[ elem_idx ] ) * m_matrix[ elem_idx ];
 		}
 
-		if( vTv == T{ 0 } )
-		{
-			m_betas[ step ] = T{ 0 };
-			continue;
-		}
-
 		m_betas[ step ] = static_cast< RT >( 2.0 ) / vTv;
+		m_matrix[ lead_elem_idx ] = sign_norm;
+
+		if( row_step == l_max_steps )
+			break;
+
 		const auto beta{ m_betas[ step ] };
 
 		// calculate Av
@@ -574,7 +573,7 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		for( size_t r{ 0 }; r < m_rows; ++r )
 		{
 			Av[ r ] = m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] * v1;
-			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
+			for( size_t c{ row_step + 1 }; c < m_cols; ++c )
 				Av[ r ] += m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ];
 		}
 
@@ -593,12 +592,6 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
 			alpha += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * Av[ r ];
 
-
-		// apply the Householder transformation QAQ to the remaining submatrix
-		// only needed operations "in situ"
-		// ===================================================================		
-		m_matrix[ lead_elem_idx ] = sign_norm;
-
 		// update those part of matrix that are changed only by right mult by QT
 		// =====================================================================
 		for( size_t r{ 0 }; r < row_step; ++r )
@@ -611,9 +604,9 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		}
 
 		// update left-upper corner of submatrix
-		// =====================================		
+		// =====================================
 		m_matrix[ calc_elem_idx_CLD( row_step, row_step, m_rows ) ] -=
-			beta * ( v1 * vTA[ row_step ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
+				beta * ( v1 * vTA[ row_step ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
 
 		// update fiest modificated sub row
 		// ================================
@@ -627,7 +620,7 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		// ================================
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
 		{
-			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };			
+			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };
 			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * ( v1 * vTA[ row_step ] + Av[ r ] * v1T - beta * alpha * v1 * v1T );
 		}
 
