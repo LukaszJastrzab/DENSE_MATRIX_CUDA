@@ -19,7 +19,7 @@ TEST( general_eigen_values_problem, eigen_test )
 {
 	double val_min{ min_double }, val_max{ max_double };
 
-	size_t mx_size{ 4 };
+	size_t mx_size{ 5 };
 
 	dense_matrix_cuda< double > A;
 	A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );

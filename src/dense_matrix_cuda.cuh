@@ -76,7 +76,7 @@ private:
 	/// function calculates index in one of initial matrix state
 	size_t calc_elem_idx( size_t row, size_t col ) const;
 	/// creates triangular factor T for blocked QR decoposition (Q = I - VTV*)
-	void create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const;
+	void create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset, const size_t row_shift = 0 ) const;
 	/// decomposes block on cpu
 	void QR_block_decomposition_cpu( const size_t block_size, const size_t step_offset, const size_t max_steps );
 	/// decomposes block on cpu
@@ -489,7 +489,7 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< DT >& x, const std::vector< 
 
 
 template< typename T >
-void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset ) const
+void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t block_size, const size_t step, const size_t step_offset, const size_t row_shift ) const
 {
 	const auto lstep = step_offset + step;
 
@@ -504,8 +504,8 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 		for( size_t s{ step_offset }; s < lstep; ++s )
 		{
 			auto s_in{ s - step_offset };
-			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx_CLD( lstep, s, m_rows ) ] ) * m_v_firsts[ lstep ];
-			for( size_t r{ lstep + 1 }; r < m_rows; ++r )
+			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx_CLD( lstep + row_shift, s, m_rows ) ] ) * m_v_firsts[ lstep ];
+			for( size_t r{ lstep + row_shift + 1 }; r < m_rows; ++r )
 				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, s, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, lstep, m_rows ) ];
 		}
 
@@ -558,6 +558,12 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		{
 			const auto elem_idx{ calc_elem_idx_CLD( r, step, m_rows ) };
 			vTv += conjugate( m_matrix[ elem_idx ] ) * m_matrix[ elem_idx ];
+		}
+
+		if( vTv == T{ 0 } )
+		{
+			m_betas[ step ] = T{ 0 };
+			continue;
 		}
 
 		m_betas[ step ] = static_cast< RT >( 2.0 ) / vTv;
@@ -651,10 +657,19 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 	const auto max_steps{ m_rows - 2 };
 	//size_t step_offset{ 0 }, row_offset{ 0 };
 
+	std::vector< T > Tmx( block_size * block_size, T{} );
+
 	m_betas.resize( max_steps );
 	m_v_firsts.resize( max_steps );
 
 	QHQ_block_decomposition_cpu( block_size, 0, max_steps );
+
+	const auto b_size = std::min( block_size, max_steps - 0 ); // - step_offset
+
+	memset( Tmx.data(), 0, b_size * b_size * sizeof( T ) );
+	for( size_t s{ 0 }; s < b_size; ++s )
+		//create_QR_triangular_factor_T( Tmx.data(), b_size, s, step_offset );
+		create_QR_triangular_factor_T( Tmx.data(), b_size, s, 0, 1 );
 
 	// to do
 
