@@ -655,23 +655,66 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::QHQ_decomposition() - m_rows != m_cols" );
 
 	const auto max_steps{ m_rows - 2 };
-	//size_t step_offset{ 0 }, row_offset{ 0 };
-
-	std::vector< T > Tmx( block_size * block_size, T{} );
+	size_t step_offset{ 0 }, row_offset{ 0 };
 
 	m_betas.resize( max_steps );
 	m_v_firsts.resize( max_steps );
 
-	QHQ_block_decomposition_cpu( block_size, 0, max_steps );
+	T* d_matrix{ nullptr }, * d_v_firsts{ nullptr }, * d_TVTA{ nullptr };
 
-	const auto b_size = std::min( block_size, max_steps - 0 ); // - step_offset
+	cudaMalloc( &d_matrix, m_matrix.size() * sizeof( T ) );
+	cudaMemcpy( d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 
-	memset( Tmx.data(), 0, b_size * b_size * sizeof( T ) );
-	for( size_t s{ 0 }; s < b_size; ++s )
-		//create_QR_triangular_factor_T( Tmx.data(), b_size, s, step_offset );
-		create_QR_triangular_factor_T( Tmx.data(), b_size, s, 0, 1 );
+	cudaMalloc( &d_v_firsts, max_steps * sizeof( T ) );
 
-	// to do
+	std::vector< T > Tmx( block_size * block_size, T{} );
+
+	cudaMalloc( &d_TVTA, block_size * m_cols * sizeof( T ) );
+
+	while( step_offset < max_steps )
+	{
+		const auto b_size = std::min( block_size, max_steps - step_offset );
+
+		QHQ_block_decomposition_cpu( b_size, step_offset, max_steps );
+
+		size_t rows_to_copy{ m_rows - row_offset };
+		size_t cols_to_copy{ std::min( b_size, m_cols - step_offset ) };
+		size_t cpy_offset{ row_offset + step_offset * m_rows };
+
+		cudaMemcpy2D(
+			d_matrix + cpy_offset,         // dst
+			m_rows * sizeof( T ),          // dst pitch
+			m_matrix.data() + cpy_offset,  // src
+			m_rows * sizeof( T ),          // src pitch
+			rows_to_copy * sizeof( T ),    // width (bytes)
+			cols_to_copy,                  // height (cols)
+			cudaMemcpyHostToDevice
+		);
+
+		size_t v_data_size = std::min( b_size, max_steps - step_offset );
+		cudaMemcpy( d_v_firsts + step_offset, m_v_firsts.data() + step_offset, v_data_size * sizeof( T ), cudaMemcpyHostToDevice );
+
+		if( step_offset + b_size >= m_cols )
+			break;
+
+		memset( Tmx.data(), 0, b_size * b_size * sizeof( T ) );
+		for( size_t s{ 0 }; s < b_size; ++s )
+			create_QR_triangular_factor_T( Tmx.data(), b_size, s, step_offset, 1 );
+
+		cudaMemcpy2D(
+			d_TVTA,                     // dst
+			b_size * sizeof( T ),       // dst pitch
+			Tmx.data(),                 // src
+			b_size * sizeof( T ),       // src pitch
+			b_size * sizeof( T ),       // width (bytes)
+			b_size,                     // height (cols)
+			cudaMemcpyHostToDevice
+		);
+
+		step_offset += b_size;
+		// to do
+	}
+
 
 	m_dynamic_state = DYNAMIC_STATE::QHQ_DECOMPOSED;
 }
