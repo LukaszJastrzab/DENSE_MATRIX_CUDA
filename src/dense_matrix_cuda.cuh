@@ -828,6 +828,7 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 	while( step_offset < max_steps )
 	{
 		const auto b_size = std::min( block_size, max_steps - step_offset );
+		const dim3 blockDim( b_size, b_size );
 
 		QHQ_block_decomposition_cpu( b_size, step_offset, max_steps );
 
@@ -872,7 +873,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 		);
 
 		{
-			dim3 blockDim( b_size, b_size );
 			dim3 gridDim( 1, div_up( m_rows, b_size ) );
 			QR_decomposition_blocked_AVT_gpu<<< gridDim, blockDim >>>( d_AVT, d_TVTA, d_matrix, d_v_firsts, d_V, m_rows, m_cols, b_size, step_offset, 1 );
 
@@ -895,7 +895,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 		step_offset += b_size;
 
 		{
-			dim3 blockDim( b_size, b_size );
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), div_up( m_rows, b_size ) );
 			QR_decomposition_blocked_AVTVT_gpu <<< gridDim, blockDim >>> ( d_AVT, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset );
 
@@ -911,7 +910,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 			//cudaMemcpy( TVTA.data(), d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
 			// test
 
-			dim3 blockDim( b_size, b_size );
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), 1 );
 			QR_decomposition_blocked_TVTA_gpu <<< gridDim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
 
@@ -921,7 +919,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 		}
 
 		{
-			dim3 blockDim( b_size, b_size );
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), div_up( m_rows - row_offset, b_size ) );
 			QR_decomposition_blocked_VTVTA_gpu <<< gridDim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
 
