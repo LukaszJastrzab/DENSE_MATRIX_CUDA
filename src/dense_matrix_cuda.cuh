@@ -825,9 +825,10 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 
 	std::vector< T > Tmx( block_size * block_size, T{} );
 
+	auto b_size = std::min( block_size, max_steps );
+
 	while( step_offset < max_steps )
 	{
-		const auto b_size = std::min( block_size, max_steps - step_offset );
 		const dim3 blockDim( b_size, b_size );
 
 		QHQ_block_decomposition_cpu( b_size, step_offset, max_steps );
@@ -854,9 +855,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 
 		size_t v_data_size = std::min( b_size, max_steps - step_offset );
 		cudaMemcpy( d_v_firsts + step_offset, m_v_firsts.data() + step_offset, v_data_size * sizeof( T ), cudaMemcpyHostToDevice );
-
-		if( step_offset + b_size >= m_cols )
-			break;
 
 		memset( Tmx.data(), 0, b_size * b_size * sizeof( T ) );
 		for( size_t s{ 0 }; s < b_size; ++s )
@@ -927,7 +925,8 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 			// test
 		}
 
-		cols_to_copy = std::min( b_size, m_cols - step_offset );
+		b_size = std::min( block_size, max_steps - step_offset );
+		cols_to_copy = step_offset < max_steps ? b_size : m_cols - step_offset;
 
 		cudaMemcpy2D(
 			m_matrix.data() + step_offset * m_rows,  // dst
@@ -939,7 +938,7 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 			cudaMemcpyDeviceToHost
 		);
 
-		row_offset += b_size;
+		row_offset = step_offset;
 	}
 
 	cudaFree( d_matrix );
