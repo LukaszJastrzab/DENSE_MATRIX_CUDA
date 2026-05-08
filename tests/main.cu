@@ -14,37 +14,90 @@ constexpr double max_float = 100.0;
 
 // test
 #include <dense_matrix.hpp>
+#include <fstream>
 
-TEST( general_eigen_values_problem, eigen_test )
+
+template < typename T >
+void QHQ_decompositions()
 {
-	double val_min{ min_double }, val_max{ max_double };
+	double val_min{ min_float }, val_max{ max_float };
+
+#ifndef __CUDA_ARCH__
+	if constexpr( std::is_same< typename real_type < T >::type, double >::value )
+#endif
+	{
+		val_min = min_double;
+		val_max = max_double;
+	}
 
 	size_t mx_size{ 5 };
 
-	dense_matrix_cuda< double > A;
+	dense_matrix_cuda< T > A;
 	A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
 
-	dm::dense_matrix< double > A_;
+	dm::dense_matrix< std::complex< double > > A_;
 	A_.init( mx_size, mx_size );
 
 	for( size_t row{ 0 }; row < mx_size; ++row )
 	{
 		for( size_t col{ 0 }; col < mx_size; ++col )
 		{
-			auto val{ generate_random< double >( val_min, val_max ) };
-			A.set_element( val, row, col );
-			A_.set_element( val, row, col );
+			auto val_real{ generate_random< double >( val_min, val_max ) };
+			auto val_imag{ generate_random< double >( val_min, val_max ) };
+			A.set_element( T( val_real, val_imag ), row, col );
+			A_.set_element( std::complex< double >( val_real, val_imag ), row, col );
 		}
 	}
 
-	auto A__ = A;
+	//auto A__ = A;
 
 	A_.QHQ_decomposition();
-	A.QHQ_decomposition( 2 );
+
+	// test
+	//ofstream outF( "m_matrix.txt" );
+	//for( auto r{ 0 }; r < A_.m_rows; ++r )
+	//{
+	//	for( auto c{ 0 }; c < A_.m_cols; ++c )
+	//		outF << A_.m_matrix[ r ][ c ] << "\t";
+	//	outF << endl;
+	//}
+	//outF << endl;
+	//for( auto i{ 0 }; i < A_.m_v_firsts.size(); ++i )
+	//	outF << A_.m_v_firsts[ i ] << "\t";
+	//outF << endl;
+	//for( auto i{ 0 }; i < A_.m_betas.size(); ++i )
+	//	outF << A_.m_betas[ i ] << "\t";
+	//outF.close();
+	// test
+
+	A.QHQ_decomposition();
+
+	//// test
+	//ofstream outFcuda( "m_matrix_cuda.txt" );
+	//for( auto r{ 0 }; r < A.m_rows; ++r )
+	//{
+	//	for( auto c{ 0 }; c < A.m_cols; ++c )
+	//		outFcuda << A.m_matrix[ calc_elem_idx_CLD( r, c, A.m_rows ) ] << "\t";
+	//	outFcuda << endl;
+	//}
+	//outFcuda << endl;
+	//for( auto i{ 0 }; i < A.m_v_firsts.size(); ++i )
+	//	outFcuda << A.m_v_firsts[ i ] << "\t";
+	//outFcuda << endl;
+	//for( auto i{ 0 }; i < A.m_betas.size(); ++i )
+	//	outFcuda << A.m_betas[ i ] << "\t";
+	//outFcuda.close();
+	//// test
 
 	EXPECT_TRUE( true );
 }
-// test
+
+
+TEST( general_eigen_values_problem, eigen_test_double )
+{
+	QHQ_decompositions< thrust::complex< double > >();
+}
+
 
 
 enum class SOLVING_TYPE : uint8_t

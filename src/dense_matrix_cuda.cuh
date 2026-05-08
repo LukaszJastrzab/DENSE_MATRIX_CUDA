@@ -70,7 +70,7 @@ public:
 	void cols_scaling( T* d_A );
 
 	/// performs blocked QHQ decomposition using Householder algorithm, H is in Hessenberg form
-	void QHQ_decomposition( const size_t block_size = 8 );
+	void QHQ_decomposition();
 
 private:
 	/// function calculates index in one of initial matrix state
@@ -91,6 +91,7 @@ private:
 	void count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 
 private:
+public:
 	/// current state of matrix
 	DYNAMIC_STATE m_dynamic_state{ DYNAMIC_STATE::NONE };
 
@@ -602,7 +603,7 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		// =====================================================================
 		for( size_t r{ 0 }; r < row_step; ++r )
 		{
-			const auto Av_{ Av[ r ] };			
+			const auto Av_{ Av[ r ] };
 			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * Av_ * v1T;
 
 			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
@@ -618,7 +619,7 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		// ================================
 		for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
 		{
-			const auto v1T{ conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] ) };			
+			const auto v1T{ conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] ) };
 			m_matrix[ calc_elem_idx_CLD( row_step, c, m_rows ) ] -= beta * ( v1 * vTA[ c ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
 		}
 
@@ -800,12 +801,20 @@ void QR_decomposition_blocked_AVTVT_gpu( const T* AVT,
 }
 
 template< typename T >
-void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
+void dense_matrix_cuda< T >::QHQ_decomposition()
 {
 	if( m_dynamic_state != DYNAMIC_STATE::COL_INIT )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::QR_decomposition() - m_dynamic_state != DYNAMIC_STATE::COL_INIT" );
 	if( m_rows != m_cols )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::QHQ_decomposition() - m_rows != m_cols" );
+
+	// ======================================================================================================
+	// here QHQ decomposition using blocked version can work only for blocks sizes 1 or 2
+	// this is bnecouse higher size involves modification whole matrix by cpu part
+	// which doesn not make a sense
+	// luckily this algorithm still works correctly for block size = 2 which give us some acceleration anyway
+	// ======================================================================================================
+	const size_t block_size{ 2 };
 
 	const auto max_steps{ m_rows - 2 };
 	size_t step_offset{ 0 }, row_offset{ 0 };
@@ -847,12 +856,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 			cudaMemcpyHostToDevice
 		);
 
-		// test
-		// std::vector< T > vecV( block_size * m_rows, T{} );
-		// cudaMemcpy( vecV.data(), d_V, block_size * m_rows * sizeof( T ), cudaMemcpyDeviceToHost );
-		// test
-
-
 		size_t v_data_size = std::min( b_size, max_steps - step_offset );
 		cudaMemcpy( d_v_firsts + step_offset, m_v_firsts.data() + step_offset, v_data_size * sizeof( T ), cudaMemcpyHostToDevice );
 
@@ -873,11 +876,6 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 		{
 			dim3 gridDim( 1, div_up( m_rows, b_size ) );
 			QR_decomposition_blocked_AVT_gpu<<< gridDim, blockDim >>>( d_AVT, d_TVTA, d_matrix, d_v_firsts, d_V, m_rows, m_cols, b_size, step_offset, 1 );
-
-			// test
-			//std::vector< T > AVT( block_size * m_rows, T{} );
-			//cudaMemcpy( AVT.data(), d_AVT, block_size * m_rows * sizeof( T ), cudaMemcpyDeviceToHost );
-			// test
 		}
 
 		cudaMemcpy2D(
@@ -895,38 +893,21 @@ void dense_matrix_cuda< T >::QHQ_decomposition( const size_t block_size )
 		{
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), div_up( m_rows, b_size ) );
 			QR_decomposition_blocked_AVTVT_gpu <<< gridDim, blockDim >>> ( d_AVT, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset );
-
-			// test
-			//cudaMemcpy( m_matrix.data(), d_matrix, m_rows * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
-			// test
 		}
 
 
 		{
-			// test
-			//std::vector< T > TVTA( block_size * m_cols, T{} );
-			//cudaMemcpy( TVTA.data(), d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
-			// test
-
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), 1 );
 			QR_decomposition_blocked_TVTA_gpu <<< gridDim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
-
-			// test
-			//cudaMemcpy( TVTA.data(), d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
-			// test
 		}
 
 		{
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), div_up( m_rows - row_offset, b_size ) );
 			QR_decomposition_blocked_VTVTA_gpu <<< gridDim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
-
-			// test
-			//cudaMemcpy( m_matrix.data(), d_matrix, m_rows * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
-			// test
 		}
 
 		b_size = std::min( block_size, max_steps - step_offset );
-		cols_to_copy = step_offset < max_steps ? b_size : m_cols - step_offset;
+		cols_to_copy = m_cols - step_offset;
 
 		cudaMemcpy2D(
 			m_matrix.data() + step_offset * m_rows,  // dst
