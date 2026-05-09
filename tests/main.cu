@@ -12,10 +12,8 @@ constexpr double min_float = 0.01;
 constexpr double max_float = 100.0;
 
 
-// test
-#include <dense_matrix.hpp>
-#include <fstream>
 
+#include <dense_matrix.hpp>
 
 template < typename T >
 void QHQ_decompositions()
@@ -30,7 +28,7 @@ void QHQ_decompositions()
 		val_max = max_double;
 	}
 
-	size_t mx_size{ 5 };
+	size_t mx_size{ 9 };
 
 	dense_matrix_cuda< T > A;
 	A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
@@ -42,58 +40,34 @@ void QHQ_decompositions()
 	{
 		for( size_t col{ 0 }; col < mx_size; ++col )
 		{
-			auto val_real{ generate_random< double >( val_min, val_max ) };
-			auto val_imag{ generate_random< double >( val_min, val_max ) };
-			A.set_element( T( val_real, val_imag ), row, col );
-			A_.set_element( std::complex< double >( val_real, val_imag ), row, col );
+			auto val{ generate_random< T >( val_min, val_max ) };
+			A.set_element( val, row, col );
+			A_.set_element( std::complex< double >( val ), row, col );
 		}
 	}
 
-	//auto A__ = A;
-
 	A_.QHQ_decomposition();
-
-	// test
-	//ofstream outF( "m_matrix.txt" );
-	//for( auto r{ 0 }; r < A_.m_rows; ++r )
-	//{
-	//	for( auto c{ 0 }; c < A_.m_cols; ++c )
-	//		outF << A_.m_matrix[ r ][ c ] << "\t";
-	//	outF << endl;
-	//}
-	//outF << endl;
-	//for( auto i{ 0 }; i < A_.m_v_firsts.size(); ++i )
-	//	outF << A_.m_v_firsts[ i ] << "\t";
-	//outF << endl;
-	//for( auto i{ 0 }; i < A_.m_betas.size(); ++i )
-	//	outF << A_.m_betas[ i ] << "\t";
-	//outF.close();
-	// test
-
 	A.QHQ_decomposition();
-
-	//// test
-	//ofstream outFcuda( "m_matrix_cuda.txt" );
-	//for( auto r{ 0 }; r < A.m_rows; ++r )
-	//{
-	//	for( auto c{ 0 }; c < A.m_cols; ++c )
-	//		outFcuda << A.m_matrix[ calc_elem_idx_CLD( r, c, A.m_rows ) ] << "\t";
-	//	outFcuda << endl;
-	//}
-	//outFcuda << endl;
-	//for( auto i{ 0 }; i < A.m_v_firsts.size(); ++i )
-	//	outFcuda << A.m_v_firsts[ i ] << "\t";
-	//outFcuda << endl;
-	//for( auto i{ 0 }; i < A.m_betas.size(); ++i )
-	//	outFcuda << A.m_betas[ i ] << "\t";
-	//outFcuda.close();
-	//// test
 
 	EXPECT_TRUE( true );
 }
 
+TEST( general_eigen_values_problem, eigen_test_float )
+{
+	QHQ_decompositions< float >();
+}
 
 TEST( general_eigen_values_problem, eigen_test_double )
+{
+	QHQ_decompositions< double >();
+}
+
+TEST( general_eigen_values_problem, eigen_test_complex_float )
+{
+	QHQ_decompositions< thrust::complex< float > >();
+}
+
+TEST( general_eigen_values_problem, eigen_test_complex_double )
 {
 	QHQ_decompositions< thrust::complex< double > >();
 }

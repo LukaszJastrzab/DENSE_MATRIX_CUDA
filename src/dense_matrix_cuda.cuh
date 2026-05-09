@@ -91,7 +91,6 @@ private:
 	void count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 
 private:
-public:
 	/// current state of matrix
 	DYNAMIC_STATE m_dynamic_state{ DYNAMIC_STATE::NONE };
 
@@ -527,7 +526,8 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 	size_t l_max_steps{ std::min( max_steps, block_end ) };
 	size_t l_max_col{ std::min( block_end, m_cols ) };
 
-	std::vector< T > Av( m_rows, T{} ), vTA( l_max_col, T{} );
+	std::vector< T > Av( m_rows, T{} );
+	T vTA{};
 
 	for( size_t step{ step_offset }; step < l_max_steps; ++step )
 	{
@@ -586,12 +586,9 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 
 		// calculate vTA ( v*A in case of complex )
 		// ========================================
-		for( size_t c{ step }; c < l_max_col; ++c )
-		{			
-			vTA[ c ] = v1T * m_matrix[ calc_elem_idx_CLD( row_step, c, m_rows ) ];
-			for( size_t r{ row_step + 1 }; r < m_rows; ++r )
-				vTA[ c ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ];
-		}
+		vTA = v1T * m_matrix[ calc_elem_idx_CLD( row_step, row_step, m_rows ) ];
+		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
+			vTA += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ];
 
 		// alpha = v*Av
 		// ============
@@ -602,47 +599,19 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		// update those part of matrix that are changed only by right mult by QT
 		// =====================================================================
 		for( size_t r{ 0 }; r < row_step; ++r )
-		{
-			const auto Av_{ Av[ r ] };
-			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * Av_ * v1T;
-
-			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
-				m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= beta * Av_ * conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] );
-		}
+			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * Av[ r ] * v1T;
 
 		// update left-upper corner of submatrix
 		// =====================================
 		m_matrix[ calc_elem_idx_CLD( row_step, row_step, m_rows ) ] -=
-				beta * ( v1 * vTA[ row_step ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
-
-		// update fiest modificated sub row
-		// ================================
-		for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
-		{
-			const auto v1T{ conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] ) };
-			m_matrix[ calc_elem_idx_CLD( row_step, c, m_rows ) ] -= beta * ( v1 * vTA[ c ] + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
-		}
+				beta * ( v1 * vTA + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
 
 		// update fiest modificated sub col
 		// ================================
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
 		{
 			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };
-			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * ( v1 * vTA[ row_step ] + Av[ r ] * v1T - beta * alpha * v1 * v1T );
-		}
-
-		// update rest part of sub matrix
-		// ==============================
-		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
-		{
-			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };
-			const auto Av_{ Av[ r ] };
-
-			for( size_t c{ row_step + 1 }; c < l_max_col; ++c )
-			{
-				const auto v1T{ conjugate( m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ] ) };
-				m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= beta * ( v1 * vTA[ c ] + Av_ * v1T - beta * alpha * v1 * v1T );
-			}
+			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * ( v1 * ( vTA - beta * alpha * v1T ) + Av[ r ] * v1T );
 		}
 	}
 }
@@ -762,7 +731,7 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 	for( int c{ 0 }; c < sum_range; ++c )
 	{
 		const int c_i = row_offset + c;
-		T v_i = ( c == t_row ? v_firsts[ c_i ] : A_out[ calc_elem_idx_CLD( row, c_i, A_rows ) ] );
+		const T v_i = ( c == t_row ? v_firsts[ c_i ] : A_out[ calc_elem_idx_CLD( row, c_i, A_rows ) ] );
 		sum += v_i * TVTA[ calc_elem_idx_CLD( c, col, block_size ) ];
 	}
 
@@ -790,9 +759,8 @@ void QR_decomposition_blocked_AVTVT_gpu( const T* AVT,
 
 	for( int c{ 0 }; c < block_size; ++c )
 	{
-		T v_i = ( col == col_offset && c == block_size - 1 ?
-				  v_firsts[ row_offset + c ] :
-				  A_out[ calc_elem_idx_CLD( col, c + row_offset, A_rows ) ] );
+		const T v_i = conjugate( col == col_offset && c == block_size - 1 ?
+				  v_firsts[ row_offset + c ] : A_out[ calc_elem_idx_CLD( col, c + row_offset, A_rows ) ] );
 
 		sum += AVT[ calc_elem_idx_CLD( row, c, A_rows ) ] * v_i;
 	}

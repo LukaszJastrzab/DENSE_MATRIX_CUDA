@@ -89,7 +89,7 @@ public:
 	template< typename U, typename V >
 	friend dense_matrix< std::common_type_t< U, V > > operator*( const V& b, const dense_matrix< U >& A );
 
-//private:
+private:
 	/// current state of matrix
 	DYNAMIC_STATE m_dynamic_state{ DYNAMIC_STATE::INIT };
 
