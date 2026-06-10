@@ -23,12 +23,17 @@ enum class DYNAMIC_STATE : int
 	LU_DECOMPOSED,
 	QR_DECOMPOSED,
 	QHQ_DECOMPOSED,
-	QUASI_QR
+	SCHUR_FORM,
+	SCHUR_VECTORS,
+	EIGEN_VECTORS
 };
 
 template< typename T >
 class dense_matrix_cuda
 {
+	/// each template calss should be friend to each other
+	template< typename > friend class dense_matrix_cuda;
+
 public:
 	/// constructors
 	dense_matrix_cuda() = default;
@@ -38,21 +43,67 @@ public:
 
 	/// destructor
 	~dense_matrix_cuda() = default;
+	/// assign operator of the same type T
+	dense_matrix_cuda& operator=( const dense_matrix_cuda& ) = default;
 
 	/// double type used in this template
 	using DT = typename double_type< T >::type;
 	/// real type used in this template
 	using RT = typename real_type< T >::type;
+	/// double complex type
+	using DC = thrust::complex< double >;
 
 	/// sets matrix sizes and allocates memory
 	void init( DYNAMIC_STATE init_state, size_t rows, size_t cols );
 	/// adds elements and throws exception if row / col is out of range
 	void set_element( T value, size_t row, size_t col );
 
+	/// max norm
+	double norm_max() const;
+	/// inf norm
+	double norm_inf() const;
+
+	/// Function permuts row lying on pos1 position with row lying on pos2 position
+	void permute_rows( size_t pos1, size_t pos2 );
+	/// Function permuts column lying on pos1 position with column lying on pos2 position
+	void permute_cols( size_t pos1, size_t pos2 );
+
 	/// it counts value r := Ax - b
 	void count_residual_vector( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	/// Method improves the accuracy of the solution
 	void iterative_refinement( std::vector< DT >& x, const std::vector< DT >& b, const double acc, const size_t max_it, const dense_matrix_cuda< T >* A_orig = nullptr ) const;
+
+	/// tarnsposition
+	void transpose();
+	/// conjugates all matrix elements
+	void conjugation();
+	/// performs hermitan transposition
+	void hermitian_transpose();
+
+	/// assign operator for different template types
+	template< typename U >
+	dense_matrix_cuda< T >& operator=( const dense_matrix_cuda< U >& );
+	/// addition operator
+	template< typename U, typename V >
+	friend dense_matrix_cuda< std::common_type_t< U, V > > operator+( const dense_matrix_cuda< U >& A, const dense_matrix_cuda< V >& B );
+	/// subtraction operator
+	template< typename U, typename V >
+	friend dense_matrix_cuda< std::common_type_t< U, V > > operator-( const dense_matrix_cuda< U >& A, const dense_matrix_cuda< V >& B );
+	/// multiplication operators
+	template< typename U, typename V >
+	friend dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const dense_matrix_cuda< V >& B );
+	/// mult operator that multiply matrix A by vector v
+	template< typename U, typename V >
+	friend std::vector< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const std::vector< U >& v );
+	/// mult operator that multiply vector v by matrix A
+	template< typename U, typename V >
+	friend std::vector< std::common_type_t< U, V > > operator*( const std::vector< U >& v, const dense_matrix_cuda< U >& A );
+	/// mult operator that multiply matrix A by scalar b
+	template< typename U, typename V >
+	friend dense_matrix_cuda< std::common_type_t< U, V > > operator*( const V& b, const dense_matrix_cuda< U >& A );
+	/// mult operator that multiply matrix A by scalar b
+	template< typename U, typename V >
+	friend dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const V& b );
 
 	/// performs blocked QR decomposition by Householder algorithm "in situ" using CUDA
 	void QR_decomposition( bool scaling, const size_t block_size = 8 );
@@ -71,6 +122,9 @@ public:
 
 	/// performs blocked QHQ decomposition using Householder algorithm, H is in Hessenberg form
 	void QHQ_decomposition();
+	/// computes eqigen values using QR algorithm
+	template< typename C1, typename C2 >
+	void compute_eigenvalues_QR( std::vector< thrust::complex< C1 > >& l, dense_matrix_cuda* SV, dense_matrix_cuda< thrust::complex< C2 > >* EV, const size_t max_it = 1000, const bool Francis = true, const double acc = std::numeric_limits< RT >::epsilon() );
 
 private:
 	/// function calculates index in one of initial matrix state
@@ -89,6 +143,21 @@ private:
 	void count_residual_Ax_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	void count_residual_LUx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
 	void count_residual_QRx_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const;
+	/// method dumps eigen values during QR algorithm
+	template< typename C1 >
+	void QR_get_eigenvalues( std::vector< thrust::complex< C1 > >& l, std::map< size_t, size_t >& final_blocks ) const;
+	/// method used buble racing in QR algorithm for eigenvalues problem
+	bool QHQ_NxN_with_shifts( const size_t row_shift, const size_t col_shift, const size_t block_end, size_t block_size, dense_matrix_cuda* V, std::vector< T > v = {} );
+	/// method returns Francis step column (double shift needed for real matrices with complex eigens)
+	std::vector< T > get_Francis_v( const size_t shift, const size_t block_end ) const;
+	/// method used in QR alogoritm, it gets eigenvalues from 2x2 Schur block
+	template< typename C1 >
+	void QR_get_eigenvalues_from_block( const size_t shift, std::vector< thrust::complex< C1 > >& l ) const;
+	/// method used for creation of Schur vectors during QR algorithm
+	void apply_VQ_step( dense_matrix_cuda& SV, const size_t row_shift, const size_t col_shift, const size_t col_len, std::vector< T >* v, T beta, size_t block_end = std::numeric_limits< size_t >::max() ) const;
+	/// computes eigen vectors from given SCHUR_FORM matrix, Schur vectors and eigen values ( used in QR algorithm)
+	template< typename C1, typename C2 >
+	void compute_eigenvectors( dense_matrix_cuda< thrust::complex< C2 > >& EV, const dense_matrix_cuda< T >& SV, const std::vector< thrust::complex< C1 > >& l, const std::map< size_t, size_t >& blocks ) const;
 
 private:
 	/// current state of matrix
@@ -99,12 +168,15 @@ private:
 	/// amount of columns
 	size_t m_cols{ 0 };
 
+	/// sing for determinant
+	int m_dsign{ 1 };
+
 	/// flattened matrix data
 	std::vector< T > m_matrix;
 	/// additional data for QR decomposition
 	std::vector< T > m_betas, m_v_firsts;
 	/// row permutation
-	std::vector< size_t > m_p_row;
+	std::vector< size_t > m_p_row, m_p_col;
 
 	/// row / column scaling parameters
 	std::vector< double > m_scalars;
@@ -131,6 +203,11 @@ inline size_t dense_matrix_cuda< T >::calc_elem_idx( size_t row, size_t col ) co
 	switch( m_dynamic_state )
 	{
 	case DYNAMIC_STATE::COL_INIT:
+	case DYNAMIC_STATE::QR_DECOMPOSED:
+	case DYNAMIC_STATE::QHQ_DECOMPOSED:
+	case DYNAMIC_STATE::SCHUR_FORM:
+	case DYNAMIC_STATE::SCHUR_VECTORS:
+	case DYNAMIC_STATE::EIGEN_VECTORS:
 		return calc_elem_idx_CLD( row, col, m_rows );
 
 	case DYNAMIC_STATE::ROL_INIT:
@@ -171,6 +248,220 @@ void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
 	m_matrix[ elem_idx ] = value;
 }
 
+template< typename T >
+double dense_matrix_cuda< T >::norm_max() const
+{
+	double result{ 0 };
+
+	for( size_t r{ 0 }; r < m_rows; ++r )
+		for( size_t c{ 0 }; c < m_cols; ++c )
+			result = std::max( result, abs_val( m_matrix[ calc_elem_idx( r, c ) ] ) );
+
+	return result;
+}
+
+template< typename T >
+double dense_matrix_cuda< T >::norm_inf() const
+{
+	double result{ 0 };
+
+	for( size_t r{ 0 }; r < m_rows; ++r )
+	{
+		double row_norm{ 0 };
+		for( size_t c{ 0 }; c < m_cols; ++c )
+			row_norm += abs_val( m_matrix[ calc_elem_idx( r, c ) ] );
+		result = std::max( row_norm, result );
+	}
+
+	return result;
+}
+
+template < typename T >
+void dense_matrix_cuda< T >::permute_rows( size_t pos1, size_t pos2 )
+{
+	if( pos1 != pos2 )
+		m_dsign = -m_dsign;
+
+	std::swap( m_p_row[ pos1 ], m_p_row[ pos2 ] );
+}
+
+template < typename T >
+void dense_matrix_cuda< T >::permute_cols( size_t pos1, size_t pos2 )
+{
+	if( pos1 != pos2 )
+		m_dsign = -m_dsign;
+
+	std::swap( m_p_col[ pos1 ], m_p_col[ pos2 ] );
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::transpose()
+{
+	std::vector< T > t_matrix( m_cols * m_rows );
+
+	for( size_t r{ 0 }; r < m_rows; ++r )
+		for( size_t c{ 0 }; c < m_cols; ++c )
+			t_matrix[ calc_elem_idx( c, r ) ] = m_matrix[ calc_elem_idx( r, c ) ];
+
+	std::swap( m_rows, m_cols );
+	std::swap( m_p_row, m_p_col );
+
+	m_matrix = std::move( t_matrix );
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::conjugation()
+{
+	for( size_t r{ 0 }; r < m_rows; ++r )
+		for( size_t c{ 0 }; c < m_cols; ++c )
+			m_matrix[ calc_elem_idx( r, c ) ] = conjugate( m_matrix[ calc_elem_idx( r, c ) ] );
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::hermitian_transpose()
+{
+	transpose();
+	conjugation();
+}
+
+template< typename T >
+template< typename U >
+dense_matrix_cuda< T >& dense_matrix_cuda< T >::operator=( const dense_matrix_cuda< U >& other )
+{
+	m_rows = other.m_rows;
+	m_cols = other.m_cols;
+	m_dynamic_state = other.m_dynamic_state;
+
+	m_matrix.resize( m_rows * m_cols );
+	for( size_t r{ 0 }; r < m_rows; ++r )
+		for( size_t c{ 0 }; c < m_cols; ++c )
+			m_matrix[ calc_elem_idx( r, c ) ] = static_cast< T >( other.m_matrix[ calc_elem_idx( r, c ) ] );
+
+	m_betas.resize( other.m_betas.size() );
+	for( size_t i{ 0 }; m_betas.size(); ++i )
+		m_betas[ i ] = static_cast< T >( other.m_betas[ i ] );
+
+	m_v_firsts.resize( other.m_v_firsts.size() );
+	for( size_t i{ 0 }; m_v_firsts.size(); ++i )
+		m_v_firsts[ i ] = static_cast< T >( other.m_v_firsts[ i ] );
+
+	m_dsign = other.m_dsign;
+	m_p_row = other.m_p_row;
+	m_p_col = other.m_p_col;
+	m_scalars = other.m_scalars;
+
+	return *this;
+}
+
+template< typename U, typename V >
+dense_matrix_cuda< std::common_type_t< U, V > > operator+( const dense_matrix_cuda< U >& A, const dense_matrix_cuda< V >& B )
+{
+	if( A.m_rows != B.m_rows || A.m_cols != B.m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda: operator+ - A.m_rows != B.m_rows || A.m_cols != B.m_cols" );
+
+	using R = std::common_type_t< U, V >;
+
+	dense_matrix_cuda< R > result( A.m_dynamic_state, A.m_rows, A.m_cols );
+
+	for( size_t r{ 0 }; r < A.m_rows; ++r )
+		for( size_t c{ 0 }; c < A.m_cols; ++c )
+			result.set_element( static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, c ) ] ) + static_cast< R >( B.m_matrix[ B.calc_elem_idx( r, c ) ] ), r, c );
+
+	return result;
+}
+
+template< typename U, typename V >
+dense_matrix_cuda< std::common_type_t< U, V > > operator-( const dense_matrix_cuda< U >& A, const dense_matrix_cuda< V >& B )
+{
+	if( A.m_rows != B.m_rows || A.m_cols != B.m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda: operator- - A.m_rows != B.m_rows || A.m_cols != B.m_cols" );
+
+	using R = std::common_type_t< U, V >;
+
+	dense_matrix_cuda< R > result( A.m_dynamic_state, A.m_rows, A.m_cols );
+
+	for( size_t r{ 0 }; r < A.m_rows; ++r )
+		for( size_t c{ 0 }; c < A.m_cols; ++c )
+			result.set_element( static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, c ) ] ) - static_cast< R >( B.m_matrix[ B.calc_elem_idx( r, c ) ] ), r, c );
+
+	return result;
+}
+
+template< typename U, typename V >
+dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const dense_matrix_cuda< V >& B )
+{
+	if( A.m_cols != B.m_rows )
+		throw std::invalid_argument( "dense_matrix_cuda: operator* - A.m_cols != B.m_rows" );
+
+	using R = std::common_type_t< U, V >;
+
+	dense_matrix_cuda< R > result( A.m_dynamic_state, A.m_rows, B.m_cols );
+
+	for( size_t r{ 0 }; r < A.m_rows; ++r )
+		for( size_t c{ 0 }; c < B.m_cols; ++c )
+		{
+			R mult_sum{};
+			for( size_t i{ 0 }; i < A.m_cols; ++i )
+				mult_sum += static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, i ) ] ) * static_cast< R >( B.m_matrix[ B.calc_elem_idx( i, c ) ] );
+			result.set_element( mult_sum, r, c );
+		}
+
+	return result;
+}
+
+template< typename U, typename V >
+std::vector< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const std::vector< U >& v )
+{
+	if( v.size != A.m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda: operator* - v.size != A.m_cols" );
+
+	using R = std::common_type_t< U, V >;
+
+	std::vector< R > result( A.m_rows, R{} );
+
+	for( size_t r{ 0 }; r < A.m_rows; ++r )
+		for( size_t c{ 0 }; c < A.m_cols; ++c )
+			result[ r ] += static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, c ) ] ) * static_cast< R >( v[ c ] );
+
+	return result;
+}
+
+template< typename U, typename V >
+std::vector< std::common_type_t< U, V > > operator*( const std::vector< U >& v, const dense_matrix_cuda< U >& A )
+{
+	if( v.size != A.m_rows )
+		throw std::invalid_argument( "dense_matrix_cuda: operator* - v.size != A.m_rows" );
+
+	using R = std::common_type_t< U, V >;
+
+	std::vector< R > result( A.m_cols, R{} );
+
+	for( size_t c{ 0 }; c < A.m_cols; ++c )
+		for( size_t r{ 0 }; r < A.m_rows; ++r )
+			result[ c ] += static_cast< R >( v[ r ] ) * static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, c ) ] );
+
+	return result;
+}
+
+template< typename U, typename V >
+dense_matrix_cuda< std::common_type_t< U, V > > operator*( const V& b, const dense_matrix_cuda< U >& A )
+{
+	using R = std::common_type_t< U, V >;
+
+	dense_matrix_cuda< R > result( A.m_rows, A.m_cols );
+
+	for( size_t r{ 0 }; r < A.m_rows; ++r )
+		for( size_t c{ 0 }; c < A.m_cols; ++c )
+			result.m_matrix[ result.calc_elem_idx( r, c ) ] = static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, c ) ] ) * static_cast< R >( b );
+
+	return result;
+}
+
+template< typename U, typename V >
+dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const V& b )
+{
+	return b * A;
+}
 
 template< typename T >
 void dense_matrix_cuda< T >::count_residual_vector( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const
@@ -1071,9 +1362,9 @@ template< typename T >
 void dense_matrix_cuda< T >::count_residual_Ax_b( const std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >& r ) const
 {
 	if( x.size() != m_cols || b.size() != m_rows || r.size() != m_rows )
-		throw std::invalid_argument( "dense_matrix< T >::count_residual_Ax_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
+		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_Ax_b - x.size() != m_cols || b.size() != m_rows || r.size() != m_rows" );
 	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT && m_dynamic_state != DYNAMIC_STATE::COL_INIT )
-		throw std::invalid_argument( "dense_matrix< T >::count_residual_Ax_b - m_dynamic_state != DYNAMIC_STATE::INIT" );
+		throw std::invalid_argument( "dense_matrix_cuda< T >::count_residual_Ax_b - m_dynamic_state != DYNAMIC_STATE::INIT" );
 
 	for( size_t row{ 0 }; row < m_rows; ++row )
 		r[ row ] = -b[ row ];
@@ -1183,7 +1474,7 @@ void dense_matrix_cuda< T >::iterative_refinement( std::vector< DT >& x, const s
 			break;
 
 		default:
-			throw std::invalid_argument( "dense_matrix< T >::iterative_refinement - dynamic state not supported" );
+			throw std::invalid_argument( "dense_matrix_cuda< T >::iterative_refinement - dynamic state not supported" );
 		}
 
 		for( size_t i = 0; i < N; ++i )
@@ -1306,4 +1597,438 @@ void dense_matrix_cuda< T >::cols_scaling( T* d_A )
 	m_scalars.resize( m_cols );
 	cudaMemcpy( m_scalars.data(), d_scalars, m_cols * sizeof( double ), cudaMemcpyDeviceToHost );
 	cudaFree( d_scalars );
+}
+
+template< typename T >
+template< typename C1 >
+void dense_matrix_cuda< T >::QR_get_eigenvalues_from_block( const size_t shift, std::vector< thrust::complex< C1 > >& l ) const
+{
+	using CT = thrust::complex< C1 >;
+
+	CT a{ m_matrix[ calc_elem_idx_CLD( shift, shift, m_rows ) ] }, b{ m_matrix[ calc_elem_idx_CLD( shift, shift + 1, m_rows ) ] },		
+		c{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift, m_rows ) ] }, d{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift + 1, m_rows ) ] };
+
+	CT tr{ a + d };
+	CT det{ a * d - b * c };
+	CT disc{ thrust::sqrt( tr * tr - static_cast< CT >( 4.0 ) * det ) };
+
+	l[ shift ] = ( tr + disc ) / CT( 2.0 );
+	l[ shift + 1 ] = ( tr - disc ) / CT( 2.0 );
+}
+
+
+template< typename T >
+template < typename C1 >
+void dense_matrix_cuda< T >::QR_get_eigenvalues( std::vector< thrust::complex< C1 > >& l, std::map< size_t, size_t >& final_blocks ) const
+{
+	using CT = thrust::complex< C1 >;
+
+	for( const auto [block_begin, block_end] : final_blocks )
+	{
+		switch( block_end - block_begin )
+		{
+		case 2:
+			QR_get_eigenvalues_from_block( block_begin, l );
+			break;
+
+		case 1:
+			l[ block_begin ] = static_cast< CT >( m_matrix[ calc_elem_idx_CLD( block_begin, block_begin, m_rows ) ] );			
+			break;
+
+		default:
+			throw std::runtime_error( "dense_matrix_cuda< T >::QR_get_eigenvalues - invalid block data" );
+		}
+	}
+}
+
+
+template< typename T >
+bool dense_matrix_cuda< T >::QHQ_NxN_with_shifts( const size_t row_shift, const size_t col_shift, const size_t block_end, const size_t block_size, dense_matrix_cuda* V, std::vector< T > v )
+{
+	const auto row_nshift{ row_shift + 1 };
+	const auto col_nshift{ col_shift + 1 };
+
+	bool use_spec_v{ v.size() > 0 };
+
+	if( !use_spec_v )
+	{
+		v.resize( block_size );
+		for( size_t i{ row_shift }; i < min( m_rows, row_shift + block_size ); ++i )
+			v[ i - row_shift ] = m_matrix[ calc_elem_idx_CLD( i, col_shift, m_rows ) ];
+	}
+
+	double col_norm{ 0.0 };
+	std::vector< double > abs_v( block_size );
+	for( size_t i{ 0 }; i < block_size; ++i )
+	{
+		double vabs{ abs_val( v[ i ] ) };
+		abs_v[ i ] = vabs;
+		col_norm += ( vabs * vabs );
+	}
+	col_norm = std::sqrt( col_norm );
+
+	T sign = ( abs_v[ 0 ] != 0.0 ? -v[ 0 ] / T{ static_cast< RT >( abs_v[ 0 ] ) } : T{ -1 } );
+	T sign_norm = sign * T{ static_cast< RT >( col_norm ) };
+
+	v[ 0 ] -= sign_norm;
+
+	std::vector< T > vT( block_size );
+	for( size_t i{ 0 }; i < block_size; ++i )
+		vT[ i ] = conjugate( v[ i ] );
+
+	T vTv{};
+	for( size_t i{ 0 }; i < block_size; ++i )
+		vTv += v[ i ] * vT[ i ];
+
+	if( !use_spec_v )
+	{
+		m_matrix[ calc_elem_idx_CLD( row_shift, col_shift, m_rows ) ] = sign_norm;		
+		for( size_t i{ row_shift + 1 }; i < min( m_rows, row_shift + block_size ); ++i )
+			m_matrix[ calc_elem_idx_CLD( i, col_shift, m_rows ) ] = T{};		
+	}
+
+	if( abs_val( vTv ) < std::numeric_limits< RT >::epsilon() )
+		return false;
+
+	const auto beta{ static_cast< RT >( 2.0 ) / vTv };
+
+	if( V != nullptr )
+		apply_VQ_step( *V, row_shift, col_shift, v.size(), &v, beta, block_end );
+
+	// A' <- A - beta * v * ( vT * A )
+	// ===============================
+	std::vector< T > vTA( m_cols, T{} );
+
+	for( size_t c{ use_spec_v ? col_shift : col_nshift }; c < m_cols; ++c )
+		for( size_t i{ row_shift }; i < min( m_rows, row_shift + block_size ); ++i )
+			vTA[ c ] += vT[ i - row_shift ] * m_matrix[ calc_elem_idx_CLD( i, c, m_rows ) ];
+
+	for( size_t c{ use_spec_v ? col_shift : col_nshift }; c < m_cols; ++c )
+		for( size_t i{ row_shift }; i < min( m_rows, row_shift + block_size ); ++i )
+			m_matrix[ calc_elem_idx_CLD( i, c, m_rows ) ] -= beta * v[ i - row_shift ] * vTA[ c ];
+
+	// A <- A' - beta * ( A' v ) vT
+	// ============================
+	std::vector< T > Av( block_end, T{} );
+
+	for( size_t r{ 0 }; r < std::min( row_nshift + block_size, block_end ); ++r )
+		for( size_t i{ row_shift }; i < min( m_cols, row_shift + block_size ); ++i )
+			Av[ r ] += m_matrix[ calc_elem_idx_CLD( r, i, m_rows ) ] * v[ i - row_shift ];
+
+	for( size_t r{ 0 }; r < std::min( row_nshift + block_size, block_end ); ++r )
+		for( size_t i{ row_shift }; i < min( m_cols, row_shift + block_size ); ++i )
+			m_matrix[ calc_elem_idx_CLD( r, i, m_rows ) ] -= beta * Av[ r ] * vT[ i - row_shift ];
+
+	return true;
+}
+
+template< typename T >
+std::vector< T > dense_matrix_cuda< T >::get_Francis_v( const size_t shift, const size_t block_end ) const
+{
+	const T a{ m_matrix[ calc_elem_idx_CLD( block_end - 1, block_end - 1, m_rows ) ] },
+		b{ m_matrix[ calc_elem_idx_CLD( block_end - 1, block_end, m_rows ) ] },
+		c{ m_matrix[ calc_elem_idx_CLD( block_end, block_end - 1, m_rows ) ] },
+		d{ m_matrix[ calc_elem_idx_CLD( block_end, block_end, m_rows ) ] };
+	const T tr{ a + d }, det{ a * d - b * c };
+	const T a11{ m_matrix[ calc_elem_idx_CLD( shift, shift, m_rows ) ] }, a12{ m_matrix[ calc_elem_idx_CLD( shift, shift + 1, m_rows ) ] },
+		a21{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift, m_rows ) ] }, a22{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift + 1, m_rows ) ] };
+	T a32{};
+
+	if( shift < m_rows - 2 )
+		a32 = m_matrix[ calc_elem_idx_CLD( shift + 2, shift + 1, m_rows ) ];
+
+	std::vector< T > v{ a11 * a11 + a21 * a12 - tr * a11 + det,
+						a11 * a21 + a21 * a22 - tr * a21,
+									a21 * a32 };
+
+	return v;
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::apply_VQ_step( dense_matrix_cuda& SV, const size_t row_shift, const size_t col_shift, size_t col_len, std::vector< T >* v, T beta, size_t block_end ) const
+{
+	if( m_rows != SV.m_rows || m_cols != SV.m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::apply_VQ_step - m_rows != SV.m_rows || m_cols != SV.m_cols" );
+
+	std::vector< T > Vv( m_rows, T{} );
+
+	std::vector< T > reflector;
+	if( v == nullptr )
+	{
+		beta = m_betas[ col_shift ];
+		reflector.resize( col_len );
+		reflector[ 0 ] = m_v_firsts[ col_shift ];
+		for( size_t i{ 1 }; i < col_len; ++i )
+			reflector[ i ] = m_matrix[ calc_elem_idx_CLD( row_shift + i, col_shift, m_rows ) ];		
+		v = &reflector;
+	}
+
+	const auto col_end{ std::min( v->size() + row_shift, m_cols ) };
+
+	// calculate Vv
+	//=============
+	for( size_t r{ 0 }; r < m_rows; ++r )
+		for( size_t c{ row_shift }; c < col_end; ++c )
+			Vv[ r ] += SV.m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * ( *v )[ c - row_shift ];
+
+	// update V matrix
+	// ===============
+	for( size_t r{ 0 }; r < m_rows; ++r )
+		for( size_t c{ row_shift }; c < col_end; ++c )
+			SV.m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= beta * Vv[ r ] * conjugate( ( *v )[ c - row_shift ] );
+
+}
+
+template< typename T >
+template< typename C1, typename C2 >
+void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::complex< C2 > >& EV, const dense_matrix_cuda< T >& SV, const std::vector< thrust::complex< C1 > >& l, const std::map< size_t, size_t >& blocks ) const
+{
+	using CT2 = thrust::complex< C2 >;
+
+	EV.init( DYNAMIC_STATE::COL_INIT, m_rows, m_cols );
+
+	const CT2 val{ 1 };
+
+	for( size_t i{ 0 }; i < l.size(); ++i )
+	{
+		const auto lambda{ l[ i ] };
+		auto blockIt = blocks.find( i );
+		if( blockIt == blocks.end() )
+			blockIt = blocks.find( i - 1 );
+		if( blockIt == blocks.end() )
+			throw std::runtime_error( "dense_matrix_cuda< T >::compute_eigenvectors - wrong block data" );
+
+		const size_t i0{ blockIt->first }, i01{ blockIt->first + 1 }, i1{ blockIt->second };
+		const size_t lead_block_size{ i1 - i0 };
+
+		switch( lead_block_size )
+		{
+		case 1:
+			EV.m_matrix[ calc_elem_idx_CLD( i, i0, m_rows ) ] = val;
+			break;
+		case 2:
+		{
+			const auto mi0{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i0, i0, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+			const auto mi1{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i01, i01, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+			EV.m_matrix[ calc_elem_idx_CLD( i0, i, m_rows ) ] = -val * ( abs_val( mi0 ) > abs_val( m_matrix[ calc_elem_idx_CLD( i01, i0, m_rows ) ] ) ?
+				static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i0, i01, m_rows ) ] ) / mi0 :
+				mi1 / static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i01, i0, m_rows ) ] ) );
+			EV.m_matrix[ calc_elem_idx_CLD( i01, i, m_rows ) ] = val;
+			break;
+		}
+		default:
+			throw std::runtime_error( "dense_matrix_cuda< T >::compute_eigenvectors - wrong block data" );
+		}
+
+		auto rit = std::make_reverse_iterator( blockIt );
+
+		while( rit != blocks.rend() )
+		{
+			const size_t j0{ rit->first }, j01{ rit->first + 1 }, j1{ rit->second };
+			const size_t this_block_size{ j1 - j0 };
+
+			switch( this_block_size )
+			{
+			case 1:
+			{
+				if( abs_val( lambda - l[ j0 ] ) <= std::numeric_limits< C1 >::epsilon() )
+					EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = val;
+				else
+				{
+					CT2 b{};
+					for( size_t j{ j1 }; j < i1; ++j )
+						b -= static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j, m_rows ) ] ) * EV.m_matrix[ calc_elem_idx_CLD( j, i, m_rows ) ];
+					EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = b / ( static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< CT2 >( lambda ) );
+				}
+				break;
+			}
+			case 2:
+			{
+				if( abs_val( lambda - l[ j0 ] ) <= std::numeric_limits< C1 >::epsilon() ||
+					abs_val( lambda - l[ j01 ] ) <= std::numeric_limits< C1 >::epsilon() )
+				{
+					const auto mj0{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+					const auto mj1{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j01, j01, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+					EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = -val * ( abs_val( mj0 ) > abs_val( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] ) ?
+						static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j01, m_rows ) ] ) / mj0 :
+						mj1 / static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] ) );
+					EV.m_matrix[ calc_elem_idx_CLD( j01, i, m_rows ) ] = val;
+					break;
+				}
+				else
+				{
+					std::vector< DC > b( this_block_size, DC{} );
+					for( size_t r{ 0 }; r < this_block_size; ++r )
+					{
+						const size_t row{ j0 + r };
+						for( size_t j{ j1 }; j < i1; ++j )
+							b[ r ] -= static_cast< DC >( m_matrix[ calc_elem_idx_CLD( row, j, m_rows ) ] ) * static_cast< DC >( EV.m_matrix[ calc_elem_idx_CLD( j, i, m_rows ) ] );
+
+						dense_matrix_cuda< DC > M2x2( DYNAMIC_STATE::ROL_INIT, this_block_size, this_block_size );
+						M2x2.m_matrix[ calc_elem_idx_CLD( 0, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< DC >( lambda );
+						M2x2.m_matrix[ calc_elem_idx_CLD( 0, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j01, m_rows ) ] );
+						M2x2.m_matrix[ calc_elem_idx_CLD( 1, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] );
+						M2x2.m_matrix[ calc_elem_idx_CLD( 1, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j01, m_rows ) ] ) - static_cast< DC >( lambda );
+
+						std::vector< DC > x( this_block_size, DC{} );
+						M2x2.LU_decomposition( true );
+						M2x2.solve_LU( x, b );
+
+						EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = static_cast< CT2 >( x[ 0 ] );
+						EV.m_matrix[ calc_elem_idx_CLD( j01, i, m_rows ) ] = static_cast< CT2 >( x[ 1 ] );
+					}
+				}
+
+				break;
+			}
+			default:
+				throw std::runtime_error( "dense_matrix_cuda< T >::compute_eigenvectors - wrong block data" );
+			}
+
+			rit++;
+		}
+	}
+
+	EV = SV * EV;
+}
+
+template< typename T >
+template< typename C1, typename C2 >
+void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::complex< C1 > >& l, dense_matrix_cuda* SV, dense_matrix_cuda< thrust::complex< C2 > >* EV, const size_t max_it, const bool Francis, const double acc )
+{
+	if( m_rows != m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::compute_eigenvalues_QR - m_rows != m_cols" );
+	if( m_dynamic_state == DYNAMIC_STATE::COL_INIT )
+		QHQ_decomposition();
+	if( m_dynamic_state != DYNAMIC_STATE::QHQ_DECOMPOSED )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::compute_eigenvalues_QR - m_dynamic_state != DYNAMIC_STATE::QHQ_DECOMPOSED" );
+
+	using CT1 = thrust::complex< C1 >;
+
+	auto block_size = Francis ? 3ull : 2ull;
+	l.resize( m_rows, CT1{} );
+	dense_matrix_cuda< T > SV_alloc;
+
+	// if only eigenvalues are needed then allocate Schur's only temporary ( as they are needed wnyway )
+	// =================================================================================================
+	if( EV != nullptr && SV == nullptr )
+		SV = &SV_alloc;
+
+	// for handling schur/eigen vectors
+	// ================================
+	if( SV != nullptr )
+	{
+		SV->init( DYNAMIC_STATE::COL_INIT, m_rows, m_cols );
+		for( size_t i{ 0 }; i < m_rows; ++i )
+			SV->set_element( T{ 1 }, i, i );
+
+		for( size_t step{ 0 }; step < m_rows - 2; ++step )
+			apply_VQ_step( *SV, step + 1, step, m_rows - step - 1, nullptr, T{} );
+	}
+
+	// vanish elements under lower diag of Hessenberg form
+	// ===================================================
+	for( size_t r{ 2 }; r < m_rows; ++r )
+		for( size_t c{ 0 }; c < r - 1; ++c )
+			m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] = T{};
+
+	std::map< size_t, size_t > blocks, final_blocks;
+	std::map< size_t, double > b2x2_deflacc;
+
+	blocks[ 0 ] = m_rows;
+
+	for( size_t iter{ 0 }; iter < max_it; ++iter )
+	{
+		// deflection
+		// ==========
+		for( auto& [block_begin, block_end] : blocks )
+		{
+			for( auto i{ block_begin }; i < block_end - 1; ++i )
+			{
+				auto ii{ i + 1 };
+
+				if( abs_val( m_matrix[ calc_elem_idx_CLD( ii, i, m_rows ) ] )
+					<= acc * ( abs_val( m_matrix[ calc_elem_idx_CLD( i, i, m_rows ) ] ) +
+							   abs_val( m_matrix[ calc_elem_idx_CLD( ii, ii, m_rows ) ] ) ) )
+				{
+					m_matrix[ calc_elem_idx_CLD( ii, i, m_rows ) ] = T{};
+					blocks[ ii ] = block_end;
+					block_end = ii;
+					break;
+				}
+			}
+		}
+
+		// remove blocks which sizes are == 1 or == 2 and cointains complex eigens
+		// =======================================================================
+		for( auto it = blocks.begin(); it != blocks.end(); )
+		{
+			const auto i0{ it->first }, i01{ it->first + 1 }, i1{ it->second };
+			const auto b_size{ i1 - i0 };
+			bool remove2x2{ false };
+
+			if( b_size == 2 )
+			{
+				auto ndefacc{ abs_val( m_matrix[ calc_elem_idx_CLD( i01, i0, m_rows ) ] ) };				
+				auto defacc = b2x2_deflacc.find( i0 );
+
+				if( defacc == b2x2_deflacc.end() )
+					b2x2_deflacc[ i0 ] = ndefacc;
+				else if( ndefacc >= defacc->second )
+				{
+					remove2x2 = true;
+					b2x2_deflacc.erase( defacc );
+				}
+			}
+
+			if( b_size == 1 || remove2x2 )
+			{
+				final_blocks[ i0 ] = i1;
+				it = blocks.erase( it );
+			}
+			else
+				++it;
+		}
+
+		if( blocks.size() == 0 )
+			break;
+
+		for( auto& [block_begin, block_end] : blocks )
+		{
+			const auto proc_block_size{ std::min( block_end - block_begin, block_size ) };
+
+			// Rayleigh shifting
+			// =================
+			const T mu{ m_matrix[ calc_elem_idx_CLD( block_end - 1, block_end - 1, m_rows ) ] };			
+			for( auto i{ block_begin }; i < block_end; ++i )
+				m_matrix[ calc_elem_idx_CLD( i, i, m_rows ) ] -= mu;
+
+			// QR Hessenberg reduction
+			// =======================
+			if( QHQ_NxN_with_shifts( block_begin, block_begin, block_end, proc_block_size, SV,
+				( proc_block_size > 2 && Francis ) ? get_Francis_v( block_begin, block_end - 1 ) : std::vector< T >() ) )
+			{
+				for( auto i{ block_begin }; i < block_end - 1; ++i )
+					QHQ_NxN_with_shifts( i + 1, i, block_end, proc_block_size, SV );
+			}
+
+			// Rayleigh shifting back
+			// ======================
+			for( auto i{ block_begin }; i < block_end; ++i )
+				m_matrix[ calc_elem_idx_CLD( i, i, m_rows ) ] += mu;
+		}
+	}
+
+	for( const auto& it : blocks )
+		final_blocks[ it.first ] = it.second;
+
+	QR_get_eigenvalues( l, final_blocks );
+
+	if( SV != nullptr )
+		SV->m_dynamic_state = DYNAMIC_STATE::SCHUR_VECTORS;
+
+	if( SV != nullptr && EV != nullptr )
+		compute_eigenvectors( *EV, *SV, l, final_blocks );
+
+	m_dynamic_state = DYNAMIC_STATE::SCHUR_FORM;
 }

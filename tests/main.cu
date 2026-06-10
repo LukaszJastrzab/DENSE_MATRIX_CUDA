@@ -12,13 +12,29 @@ constexpr double min_float = 0.01;
 constexpr double max_float = 100.0;
 
 
-
-#include <dense_matrix.hpp>
-
 template < typename T >
-void QHQ_decompositions()
+void eigenvalues_test()
 {
-	double val_min{ min_float }, val_max{ max_float };
+	size_t mx_size{ 10 };
+
+	// double type used in solving / refinement
+	using DT = typename double_type< T >::type;
+	// real type used in solving / refinement
+	using RT = typename real_type< T >::type;
+
+	// tested matrix
+	dense_matrix_cuda< T > A, A_;
+	dense_matrix_cuda< thrust::complex< RT > > IL;
+
+	// Schur vectors
+	dense_matrix_cuda< T > SV, SVT;
+	// eigenvectors
+	dense_matrix_cuda< thrust::complex< RT > > EV;
+
+	// eigen values
+	vector< thrust::complex< RT > > L;
+
+	double val_min{ min_float }, val_max{ max_float }, eps{ eps_float };
 
 #ifndef __CUDA_ARCH__
 	if constexpr( std::is_same< typename real_type < T >::type, double >::value )
@@ -26,15 +42,11 @@ void QHQ_decompositions()
 	{
 		val_min = min_double;
 		val_max = max_double;
+		eps = eps_double;
 	}
 
-	size_t mx_size{ 9 };
-
-	dense_matrix_cuda< T > A;
 	A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
-
-	dm::dense_matrix< std::complex< double > > A_;
-	A_.init( mx_size, mx_size );
+	IL.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
 
 	for( size_t row{ 0 }; row < mx_size; ++row )
 	{
@@ -42,34 +54,47 @@ void QHQ_decompositions()
 		{
 			auto val{ generate_random< T >( val_min, val_max ) };
 			A.set_element( val, row, col );
-			A_.set_element( std::complex< double >( val ), row, col );
 		}
 	}
 
-	A_.QHQ_decomposition();
-	A.QHQ_decomposition();
+	A_ = A;
+
+	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 100, true ) );
+
+	// verification of the results
+	// ===========================
+	SVT = SV;
+	SVT.hermitian_transpose();
+	auto schur_residual_check = A_ - SV * A * SVT;
+	EXPECT_LE( schur_residual_check.norm_max() / A_.norm_max(), eps );
+
+	for( size_t rc{ 0 }; rc < mx_size; ++rc )
+		IL.set_element( L[ rc ], rc, rc );
+
+	auto eigen_residual_check = A_ * EV - EV * IL;
+	EXPECT_LE( eigen_residual_check.norm_inf() / A_.norm_inf(), eps );
 
 	EXPECT_TRUE( true );
 }
 
 TEST( general_eigen_values_problem, eigen_test_float )
 {
-	QHQ_decompositions< float >();
+	eigenvalues_test< float >();
 }
 
 TEST( general_eigen_values_problem, eigen_test_double )
 {
-	QHQ_decompositions< double >();
+	eigenvalues_test< double >();
 }
 
 TEST( general_eigen_values_problem, eigen_test_complex_float )
 {
-	QHQ_decompositions< thrust::complex< float > >();
+	eigenvalues_test< thrust::complex< float > >();
 }
 
 TEST( general_eigen_values_problem, eigen_test_complex_double )
 {
-	QHQ_decompositions< thrust::complex< double > >();
+	eigenvalues_test< thrust::complex< double > >();
 }
 
 
