@@ -12,6 +12,8 @@
 
 #include "utilities.cuh"
 
+namespace dmc
+{
 
 // Type definition for state of dense_matrix_cuda
 // ==============================================
@@ -45,6 +47,11 @@ public:
 	~dense_matrix_cuda() = default;
 	/// assign operator of the same type T
 	dense_matrix_cuda& operator=( const dense_matrix_cuda& ) = default;
+
+	/// return amount of rows
+	size_t get_rows_amount() const;
+	/// return amount of columns
+	size_t get_cols_amount() const;
 
 	/// double type used in this template
 	using DT = typename double_type< T >::type;
@@ -236,6 +243,17 @@ void dense_matrix_cuda< T >::init( DYNAMIC_STATE init_state, size_t rows, size_t
 	m_matrix.resize( m_rows * m_cols, T{} );
 }
 
+template< typename T >
+size_t dense_matrix_cuda< T >::get_rows_amount() const
+{
+	return m_rows;
+}
+
+template< typename T >
+size_t dense_matrix_cuda< T >::get_cols_amount() const
+{
+	return m_cols;
+}
 
 template< typename T >
 void dense_matrix_cuda< T >::set_element( T value, size_t row, size_t col )
@@ -1865,13 +1883,13 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 							b[ r ] -= static_cast< DC >( m_matrix[ calc_elem_idx_CLD( row, j, m_rows ) ] ) * static_cast< DC >( EV.m_matrix[ calc_elem_idx_CLD( j, i, m_rows ) ] );
 
 						dense_matrix_cuda< DC > M2x2( DYNAMIC_STATE::ROL_INIT, this_block_size, this_block_size );
-						M2x2.m_matrix[ calc_elem_idx_CLD( 0, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< DC >( lambda );
-						M2x2.m_matrix[ calc_elem_idx_CLD( 0, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j01, m_rows ) ] );
-						M2x2.m_matrix[ calc_elem_idx_CLD( 1, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] );
-						M2x2.m_matrix[ calc_elem_idx_CLD( 1, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j01, m_rows ) ] ) - static_cast< DC >( lambda );
+						M2x2.m_matrix[ calc_elem_idx_RLD( 0, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< DC >( lambda );
+						M2x2.m_matrix[ calc_elem_idx_RLD( 0, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j01, m_rows ) ] );
+						M2x2.m_matrix[ calc_elem_idx_RLD( 1, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] );
+						M2x2.m_matrix[ calc_elem_idx_RLD( 1, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j01, m_rows ) ] ) - static_cast< DC >( lambda );
 
 						std::vector< DC > x( this_block_size, DC{} );
-						M2x2.LU_decomposition( true );
+						M2x2.LU_decomposition( true, this_block_size );
 						M2x2.solve_LU( x, b );
 
 						EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = static_cast< CT2 >( x[ 0 ] );
@@ -2031,4 +2049,6 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 		compute_eigenvectors( *EV, *SV, l, final_blocks );
 
 	m_dynamic_state = DYNAMIC_STATE::SCHUR_FORM;
+}
+
 }
