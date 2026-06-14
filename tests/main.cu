@@ -353,7 +353,7 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 		eps = eps_double;
 	}
 
-	size_t mx_size{ 5 };
+	size_t mx_size{ 4000 };
 
 	dmc::dense_matrix_cuda< T > A;
 

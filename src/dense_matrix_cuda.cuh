@@ -988,6 +988,13 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 	const int row_b = row - row_shift;
 	T sum{};
 
+	extern __shared__ unsigned char sdata_raw[];
+	T* Tmx = reinterpret_cast< T* >( sdata_raw );
+
+	Tmx[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ] = TVTA[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ];
+
+	__syncthreads();
+
 	bool active = !( col >= A_cols || row_b >= row_offset + block_size );
 
 	if( active )
@@ -1003,9 +1010,9 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 
 	if( active )
 	{
-		sum = conjugate( TVTA[ calc_elem_idx_CLD( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( 0, col, block_size ) ];
+		sum = conjugate( Tmx[ calc_elem_idx_CLD( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( 0, col, block_size ) ];
 		for( int r{ 1 }; r <= threadIdx.y; ++r )
-			sum += conjugate( TVTA[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( r, col, block_size ) ];
+			sum += conjugate( Tmx[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( r, col, block_size ) ];
 	}
 
 	__syncthreads();
@@ -1175,7 +1182,8 @@ void dense_matrix_cuda< T >::QHQ_decomposition()
 
 		{
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), 1 );
-			QR_decomposition_blocked_TVTA_gpu <<< gridDim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
+			size_t lmem_size{ b_size * b_size * sizeof( T ) };
+			QR_decomposition_blocked_TVTA_gpu <<< gridDim, blockDim, lmem_size >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
 		}
 
 		{
@@ -1349,7 +1357,8 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 
 		dim3 blockDim( b_size, b_size );
 		dim3 grid1Dim( div_up( m_cols - step_offset, b_size ), 1 );
-		QR_decomposition_blocked_TVTA_gpu <<< grid1Dim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
+		size_t lmem_size{ b_size * b_size * sizeof( T ) };
+		QR_decomposition_blocked_TVTA_gpu <<< grid1Dim, blockDim, lmem_size >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
 
 		dim3 grid2Dim( div_up( m_cols - step_offset, b_size ), div_up( m_rows - row_offset, b_size ) );
 		QR_decomposition_blocked_VTVTA_gpu <<< grid2Dim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
