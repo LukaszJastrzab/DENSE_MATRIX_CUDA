@@ -1023,6 +1023,94 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 
 template< typename T >
 __global__
+void QR_decomposition_blocked_TVTA_gpu_new( T* TVTA,
+	const T* A_in,
+	const T* v_firsts,
+	const int A_rows,
+	const int A_cols,
+	const int block_size,
+	const int row_offset,
+	const int col_offset,
+	const int row_shift )
+{
+	const int col = col_offset + threadIdx.x + blockDim.x * blockIdx.x;
+	const int col_b = row_offset + threadIdx.x;
+	const int row = row_offset + threadIdx.y + row_shift;
+	const int row_b = row - row_shift;
+	T sum{};
+
+	extern __shared__ unsigned char sdata_raw[];
+	T* Tmx = reinterpret_cast< T* >( sdata_raw );
+
+	//T* Vblock = reinterpret_cast< T* >( sdata_raw + block_size * block_size * sizeof( T ) );
+	__shared__ T Vblock[ 16 ];
+	__shared__ T Ablock[ 16 ];
+
+	Tmx[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ] = TVTA[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ];
+
+	__syncthreads();
+
+	bool active = !( col >= A_cols || row_b >= row_offset + block_size );
+
+	if( active )
+	{
+		if( threadIdx.x < threadIdx.y )
+			Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( A_in[ calc_elem_idx_CLD( threadIdx.y, col_b, A_rows ) ] );
+		else if( threadIdx.x == threadIdx.y )
+			Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = v_firsts[ row_b ];
+
+		Ablock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = A_in[ calc_elem_idx_CLD( threadIdx.y, col, A_rows ) ];
+	}
+	__syncthreads();
+
+	if( active )
+		for( int r{ row_b }; r < block_size; ++r )
+			sum += Vblock[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] * Ablock[ calc_elem_idx_CLD( r, threadIdx.x, block_size ) ];
+
+	int block{ block_size };
+	while( block < A_rows )
+	{
+		__syncthreads();
+
+		int t_row{ block + ( int )threadIdx.y };
+		if( active && t_row < A_rows )
+		{
+			Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( A_in[ calc_elem_idx_CLD( t_row, col_b, A_rows ) ] );
+			Ablock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = A_in[ calc_elem_idx_CLD( t_row, col, A_rows ) ];
+		}
+		else
+		{
+			Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = T{};
+			Ablock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = T{};
+		}
+
+		__syncthreads();
+
+		for( int r{ 0 }; r < block_size; ++r )
+			sum += Vblock[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] * Ablock[ calc_elem_idx_CLD( r, threadIdx.x, block_size ) ];
+
+		block += block_size;
+	}
+
+	TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;
+
+	__syncthreads();
+
+	if( active )
+	{
+		sum = conjugate( Tmx[ calc_elem_idx_CLD( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( 0, col, block_size ) ];
+		for( int r{ 1 }; r <= threadIdx.y; ++r )
+			sum += conjugate( Tmx[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( r, col, block_size ) ];
+	}
+
+	__syncthreads();
+
+	if( active )
+		TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;
+}
+
+template< typename T >
+__global__
 void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 	T* A_out,
 	const T* v_firsts,
@@ -1296,6 +1384,13 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 
 	T *d_matrix{ nullptr }, *d_v_firsts{ nullptr }, *d_TVTA{ nullptr };
 
+	// test
+	std::vector< T > m_matrix_new( m_matrix.size(), T{} ), tvtold( block_size * m_cols, T{} ), tvtnew( block_size * m_cols, T{} ), tvtdiff( block_size * m_cols, T{} );
+	T* d_matrix_new{ nullptr }, * d_TVTA_new{ nullptr };
+	cudaMalloc( &d_matrix_new, m_matrix.size() * sizeof( T ) );
+	cudaMalloc( &d_TVTA_new, block_size * m_cols * sizeof( T ) );
+	// test
+
 	cudaMalloc( &d_matrix, m_matrix.size() * sizeof( T ) );
 	cudaMemcpy( d_matrix, m_matrix.data(), m_matrix.size() * sizeof( T ), cudaMemcpyHostToDevice );
 
@@ -1333,6 +1428,10 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 			cudaMemcpyHostToDevice
 		);
 
+		// test
+		cudaMemcpy( d_matrix_new, d_matrix, m_matrix.size() * sizeof( T ), cudaMemcpyDeviceToDevice );
+		// test
+
 		size_t v_data_size = std::min( b_size, max_steps - step_offset );
 		cudaMemcpy( d_v_firsts + step_offset, m_v_firsts.data() + step_offset, v_data_size * sizeof( T ), cudaMemcpyHostToDevice );
 
@@ -1353,12 +1452,34 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 			cudaMemcpyHostToDevice
 		);
 
+		// test
+		cudaMemcpy( d_TVTA_new, d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToDevice );
+		// test
+
 		step_offset += b_size;
 
 		dim3 blockDim( b_size, b_size );
 		dim3 grid1Dim( div_up( m_cols - step_offset, b_size ), 1 );
 		size_t lmem_size{ b_size * b_size * sizeof( T ) };
 		QR_decomposition_blocked_TVTA_gpu <<< grid1Dim, blockDim, lmem_size >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
+
+		// test
+		{
+			dim3 blockDim( b_size, b_size );
+			dim3 grid1Dim( div_up( m_cols - step_offset, b_size ), 1 );
+			size_t lmem_size{ b_size * b_size * sizeof( T ) };
+			QR_decomposition_blocked_TVTA_gpu_new << < grid1Dim, blockDim, lmem_size >> > ( d_TVTA_new, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
+
+			cudaMemcpy( tvtold.data(), d_TVTA, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
+			cudaMemcpy( tvtnew.data(), d_TVTA_new, block_size * m_cols * sizeof( T ), cudaMemcpyDeviceToHost );
+
+			for( int i{ 0 }; i < block_size * m_cols; ++i )
+				tvtdiff[ i ] = tvtold[ i ] - tvtnew[ i ];
+
+			tvtdiff[ 0 ] = tvtdiff[ 0 ];
+		}
+		// test
+
 
 		dim3 grid2Dim( div_up( m_cols - step_offset, b_size ), div_up( m_rows - row_offset, b_size ) );
 		QR_decomposition_blocked_VTVTA_gpu <<< grid2Dim, blockDim >>> ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
@@ -1381,6 +1502,11 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 	cudaFree( d_TVTA );
 	cudaFree( d_v_firsts );
 	cudaFree( d_matrix );
+
+	// test
+	cudaFree( d_matrix_new );
+	cudaFree( d_TVTA_new );
+	// test
 
 	m_dynamic_state = DYNAMIC_STATE::QR_DECOMPOSED;
 }
