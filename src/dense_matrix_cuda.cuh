@@ -1045,6 +1045,7 @@ void QR_decomposition_blocked_TVTA_gpu_new( T* TVTA,
 	//T* Vblock = reinterpret_cast< T* >( sdata_raw + block_size * block_size * sizeof( T ) );
 	__shared__ T Vblock[ 16 ];
 	__shared__ T Ablock[ 16 ];
+	__shared__ T VTA[ 16 ];
 
 	Tmx[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ] = TVTA[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ];
 
@@ -1089,18 +1090,16 @@ void QR_decomposition_blocked_TVTA_gpu_new( T* TVTA,
 		block_offset += block_size;
 	}
 
-	TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;
+	VTA[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = sum;
 
 	__syncthreads();
 
 	if( active )
 	{
-		sum = conjugate( Tmx[ calc_elem_idx_CLD( 0, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( 0, col, block_size ) ];
-		for( int r{ 1 }; r <= threadIdx.y; ++r )
-			sum += conjugate( Tmx[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * TVTA[ calc_elem_idx_CLD( r, col, block_size ) ];
+		sum = T{};
+		for( int r{ 0 }; r <= threadIdx.y; ++r )
+			sum += conjugate( Tmx[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * VTA[ calc_elem_idx_CLD( r, threadIdx.x, block_size ) ];
 	}
-
-	__syncthreads();
 
 	if( active )
 		TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;
