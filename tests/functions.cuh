@@ -1,4 +1,10 @@
 #include <random>
+// test
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+// test
 #include <thrust/complex.h>
 
 template< typename T >
@@ -27,4 +33,34 @@ thrust::complex< double > generate_random( double min_val, double max_val )
 {
 	return thrust::complex< double >( generate_random< double >( min_val, max_val ), generate_random< double >( min_val, max_val ) );
 }
+
+template < typename T >
+void print_matrix( std::vector< T >& matrix, size_t rows, size_t cols )
+{
+	std::ofstream out( "matrix.tsv" );
+
+	for( size_t r = 0; r < rows; ++r )
+	{
+		for( size_t c = 0; c < cols; ++c )
+		{
+			auto value = matrix[ r + c * rows ];
+
+			std::ostringstream ss;
+			ss << std::setprecision( 15 ) << value;
+
+			std::string str = ss.str();
+			std::replace( str.begin(), str.end(), '.', ',' );
+
+			out << str;
+
+			if( c + 1 < cols )
+				out << '\t';
+		}
+
+		out << '\n';
+	}
+
+	out.close();
+}
+
 
