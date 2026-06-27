@@ -53,7 +53,7 @@ void generate_hermitian_rand_matrix( dmc::dense_matrix_cuda< T >& mx, double val
 template < typename T >
 void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 {
-	size_t mx_size{ 10 };
+	size_t mx_size{ 25 };
 
 	// double type used in solving / refinement
 	using DT = typename double_type< T >::type;
@@ -105,7 +105,7 @@ void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 
 	A_ = A;
 
-	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 100, double_shift ) );
+	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 1000, double_shift ) );
 
 	// verification of the results
 	// ===========================
@@ -123,57 +123,57 @@ void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 	EXPECT_TRUE( true );
 }
 
-//TEST( hermitian_eigen_values_problem, eigen_test_float )
-//{
-//	eigenvalues_test< float >( EIGEN_PROBLEM_TYPE::HERMITIAN );
-//}
-//
-//TEST( hermitian_eigen_values_problem, eigen_test_double )
-//{
-//	eigenvalues_test< double >( EIGEN_PROBLEM_TYPE::HERMITIAN );
-//}
-//
-//TEST( hermitian_eigen_values_problem, eigen_test_complex_float )
-//{
-//	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::HERMITIAN );
-//}
-//
-//TEST( hermitian_eigen_values_problem, eigen_test_complex_double )
-//{
-//	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::HERMITIAN );
-//}
-//
-//
-//TEST( complex_eigen_values_problem, eigen_test_complex_float )
-//{
-//	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::COMPLEX );
-//}
-//
-//TEST( complex_eigen_values_problem, eigen_test_complex_double )
-//{
-//	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::COMPLEX );
-//}
-//
-//
-//TEST( general_eigen_values_problem, eigen_test_float )
-//{
-//	eigenvalues_test< float >( EIGEN_PROBLEM_TYPE::GENERAL );
-//}
-//
-//TEST( general_eigen_values_problem, eigen_test_double )
-//{
-//	eigenvalues_test< double >( EIGEN_PROBLEM_TYPE::GENERAL );
-//}
-//
-//TEST( general_eigen_values_problem, eigen_test_complex_float )
-//{
-//	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::GENERAL );
-//}
-//
-//TEST( general_eigen_values_problem, eigen_test_complex_double )
-//{
-//	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::GENERAL );
-//}
+TEST( hermitian_eigen_values_problem, eigen_test_float )
+{
+	eigenvalues_test< float >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_double )
+{
+	eigenvalues_test< double >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_complex_float )
+{
+	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_complex_double )
+{
+	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+
+TEST( complex_eigen_values_problem, eigen_test_complex_float )
+{
+	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::COMPLEX );
+}
+
+TEST( complex_eigen_values_problem, eigen_test_complex_double )
+{
+	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::COMPLEX );
+}
+
+
+TEST( general_eigen_values_problem, eigen_test_float )
+{
+	eigenvalues_test< float >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+TEST( general_eigen_values_problem, eigen_test_double )
+{
+	eigenvalues_test< double >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+TEST( general_eigen_values_problem, eigen_test_complex_float )
+{
+	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+TEST( general_eigen_values_problem, eigen_test_complex_double )
+{
+	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
 
 
 
@@ -353,7 +353,7 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 		eps = eps_double;
 	}
 
-	size_t mx_size{ 150 };
+	size_t mx_size{ 1500 };
 
 	dmc::dense_matrix_cuda< T > A;
 
@@ -386,7 +386,7 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 	switch( solving_type )
 	{
 	case SOLVING_TYPE::QR_decomposition:
-		A.QR_decomposition( scaling, 4 );
+		A.QR_decomposition( scaling, 16 );
 		break;
 
 	case SOLVING_TYPE::LU_decomposition:
