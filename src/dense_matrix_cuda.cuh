@@ -191,14 +191,14 @@ private:
 };
 
 __host__ __device__ __forceinline__
-size_t calc_elem_idx_RLD( size_t row, size_t col, size_t cols )
+size_t RLD( size_t row, size_t col, size_t cols )
 {
 	// row majority
 	return col + row * cols;
 }
 
 __host__ __device__ __forceinline__
-size_t calc_elem_idx_CLD( size_t row, size_t col, size_t rows )
+size_t CLD( size_t row, size_t col, size_t rows )
 {
 	// column majority
 	return row + col * rows;
@@ -215,10 +215,10 @@ inline size_t dense_matrix_cuda< T >::calc_elem_idx( size_t row, size_t col ) co
 	case DYNAMIC_STATE::SCHUR_FORM:
 	case DYNAMIC_STATE::SCHUR_VECTORS:
 	case DYNAMIC_STATE::EIGEN_VECTORS:
-		return calc_elem_idx_CLD( row, col, m_rows );
+		return CLD( row, col, m_rows );
 
 	case DYNAMIC_STATE::ROL_INIT:
-		return calc_elem_idx_RLD( row, col, m_cols );
+		return RLD( row, col, m_cols );
 
 	default:
 		throw std::invalid_argument( "dense_matrix_cuda< T >::calc_elem_idx - state not supported" );
@@ -513,7 +513,7 @@ void dense_matrix_cuda< T >::choose_pivot( const size_t step )
 
 	for( size_t row{ step }; row < m_rows; ++row )
 	{
-		const double new_abs{ abs_val( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], step, m_cols ) ] ) };
+		const double new_abs{ abs_val( m_matrix[ RLD( m_p_row[ row ], step, m_cols ) ] ) };
 
 		if( new_abs > ABS_VAL )
 		{
@@ -536,19 +536,19 @@ void dense_matrix_cuda< T >::LU_block_decomposition_cpu( const size_t block_size
 		choose_pivot( step );
 
 		const size_t eliminating_row = m_p_row[ step ];
-		const auto pivot{ m_matrix[ calc_elem_idx_RLD( eliminating_row, step, m_cols ) ] };
+		const auto pivot{ m_matrix[ RLD( eliminating_row, step, m_cols ) ] };
 
 		for( size_t row{ step + 1 }; row < m_rows; ++row )
 		{
 			const size_t eliminated_row = m_p_row[ row ];
 
-			const size_t elimintor_idx{ calc_elem_idx_RLD( eliminated_row, step, m_cols ) };
+			const size_t elimintor_idx{ RLD( eliminated_row, step, m_cols ) };
 
 			m_matrix[ elimintor_idx ] /= pivot;
 			const auto eliminator = m_matrix[ elimintor_idx ];
 
 			for( size_t col{ step + 1 }; col < std::min( m_cols, step_offset + block_size ); ++col )
-				m_matrix[ calc_elem_idx_RLD( eliminated_row, col, m_cols ) ] -= eliminator * m_matrix[ calc_elem_idx_RLD( eliminating_row, col, m_cols ) ];
+				m_matrix[ RLD( eliminated_row, col, m_cols ) ] -= eliminator * m_matrix[ RLD( eliminating_row, col, m_cols ) ];
 		}
 	}
 }
@@ -571,8 +571,8 @@ void L_block_update(
 	T* U_i = reinterpret_cast< T* >( sdata_raw + ( ( mx_size + threadIdx.x ) * mx_size ) * sizeof( T ) );
 
 	if( threadIdx.y > threadIdx.x )
-		L[ calc_elem_idx_RLD( threadIdx.y, threadIdx.x, mx_size ) ]	=
-			A_in[ calc_elem_idx_RLD( p_row[ row_offset + threadIdx.y ], row_offset + threadIdx.x, A_cols ) ];
+		L[ RLD( threadIdx.y, threadIdx.x, mx_size ) ]	=
+			A_in[ RLD( p_row[ row_offset + threadIdx.y ], row_offset + threadIdx.x, A_cols ) ];
 
 	__syncthreads();
 
@@ -581,12 +581,12 @@ void L_block_update(
 
 	for( int r{ 0 }; r < mx_size; ++r )
 	{
-		const size_t in_idx = calc_elem_idx_RLD( p_row[ row_offset + r ], col, A_cols );
+		const size_t in_idx = RLD( p_row[ row_offset + r ], col, A_cols );
 
 		U_i[ r ] = A_in[ in_idx ];
 
 		for( int c{ 0 }; c < r; ++c )
-			U_i[ r ] -= L[ calc_elem_idx_RLD( r, c, mx_size ) ] * U_i[ c ];
+			U_i[ r ] -= L[ RLD( r, c, mx_size ) ] * U_i[ c ];
 
 		A_in[ in_idx ] = U_i[ r ];
 	}
@@ -615,21 +615,21 @@ void LU_Schur_complement(
 	T* U = reinterpret_cast< T* >( sdata_raw + mx_count * sizeof( T ) );
 
 	if ( row < A_rows )
-		L[ calc_elem_idx_RLD( threadIdx.y, threadIdx.x, mx_size ) ] = A_in[ calc_elem_idx_RLD( row_orig, row_offset + threadIdx.x, A_cols ) ];
+		L[ RLD( threadIdx.y, threadIdx.x, mx_size ) ] = A_in[ RLD( row_orig, row_offset + threadIdx.x, A_cols ) ];
 	if ( col < A_cols )
-		U[ calc_elem_idx_RLD( threadIdx.y, threadIdx.x, mx_size ) ] = A_in[ calc_elem_idx_RLD( p_row[ row_offset + threadIdx.y ], col, A_cols ) ];
+		U[ RLD( threadIdx.y, threadIdx.x, mx_size ) ] = A_in[ RLD( p_row[ row_offset + threadIdx.y ], col, A_cols ) ];
 
 	__syncthreads();
 
 	if( row >= A_rows || col >= A_cols )
 		return;
 
-	const size_t in_idx = calc_elem_idx_RLD( row_orig, col, A_cols );
+	const size_t in_idx = RLD( row_orig, col, A_cols );
 
 	T res{ A_in[ in_idx ] };
 
 	for( int i{ 0 }; i < blockDim.x; ++i )
-		res -= L[ calc_elem_idx_RLD( threadIdx.y, i, mx_size ) ] * U[ calc_elem_idx_RLD( i, threadIdx.x, mx_size ) ];
+		res -= L[ RLD( threadIdx.y, i, mx_size ) ] * U[ RLD( i, threadIdx.x, mx_size ) ];
 
 	A_in[ in_idx ] = res;
 }
@@ -740,7 +740,7 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< DT >& x, const std::vector< 
 		y->at( row ) = ( b[ p_row ] * static_cast< DT >( m_scalars[ p_row ] ) );
 
 		for( size_t col{ 0 }; col < row; ++col )
-			y->at( row ) -= static_cast< DT >( m_matrix[ calc_elem_idx_RLD( p_row, col, m_cols ) ] ) * y->at( col );
+			y->at( row ) -= static_cast< DT >( m_matrix[ RLD( p_row, col, m_cols ) ] ) * y->at( col );
 	}
 
 	// second solve the equation Ux = y
@@ -750,9 +750,9 @@ void dense_matrix_cuda< T >::solve_LU( std::vector< DT >& x, const std::vector< 
 		x[ row ] = y->at( row );
 
 		for( int col{ row + 1 }; col < m_cols; ++col )
-			x[ row ] -= static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] ) * x[ col ];
+			x[ row ] -= static_cast< DT >( m_matrix[ RLD( m_p_row[ row ], col, m_cols ) ] ) * x[ col ];
 
-		x[ row ] /= m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], row, m_cols ) ];
+		x[ row ] /= m_matrix[ RLD( m_p_row[ row ], row, m_cols ) ];
 	}
 }
 
@@ -774,11 +774,11 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< DT >& x, const std::vector< 
 	{
 		DT vTb{ conjugate( static_cast< DT >( m_v_firsts[ step ] ) ) * x[ step ] };
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTb += conjugate( static_cast< DT >( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) ) * x[ r ];
+			vTb += conjugate( static_cast< DT >( m_matrix[ CLD( r, step, m_rows ) ] ) ) * x[ r ];
 
 		x[ step ] -= static_cast< DT >( m_betas[ step ] * m_v_firsts[ step ] ) * vTb;
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			x[ r ] -= static_cast< DT >( m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * vTb;
+			x[ r ] -= static_cast< DT >( m_betas[ step ] * m_matrix[ CLD( r, step, m_rows ) ] ) * vTb;
 	}
 
 	// then solve Rx = Q^T * b by back substitution
@@ -787,9 +787,9 @@ void dense_matrix_cuda< T >::solve_QR( std::vector< DT >& x, const std::vector< 
 	{
 		DT sum{ T{} };
 		for( int c{ r + 1 }; c < m_cols; ++c )
-			sum += static_cast< DT >( m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] ) * x[ c ];
+			sum += static_cast< DT >( m_matrix[ CLD( r, c, m_rows ) ] ) * x[ c ];
 
-		x[ r ] = ( x[ r ] - sum ) / m_matrix[ calc_elem_idx_CLD( r, r, m_rows ) ];
+		x[ r ] = ( x[ r ] - sum ) / m_matrix[ CLD( r, r, m_rows ) ];
 	}
 
 	for( size_t c{ 0 }; c < m_cols; ++c )
@@ -805,7 +805,7 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 	if( lstep >= m_betas.size() )
 		throw std::out_of_range( "dense_matrix_cuda< T >::create_QR_triangular_factor_T - lstep >= m_betas.size()" );
 
-	Tmx[ calc_elem_idx_CLD( step, step, block_size ) ] = m_betas[ lstep ];
+	Tmx[ CLD( step, step, block_size ) ] = m_betas[ lstep ];
 
 	if( step > 0 )
 	{
@@ -813,17 +813,17 @@ void dense_matrix_cuda< T >::create_QR_triangular_factor_T( T* Tmx, const size_t
 		for( size_t s{ step_offset }; s < lstep; ++s )
 		{
 			auto s_in{ s - step_offset };
-			VTv[ s_in ] = conjugate( m_matrix[ calc_elem_idx_CLD( lstep + row_shift, s, m_rows ) ] ) * m_v_firsts[ lstep ];
+			VTv[ s_in ] = conjugate( m_matrix[ CLD( lstep + row_shift, s, m_rows ) ] ) * m_v_firsts[ lstep ];
 			for( size_t r{ lstep + row_shift + 1 }; r < m_rows; ++r )
-				VTv[ s_in ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, s, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, lstep, m_rows ) ];
+				VTv[ s_in ] += conjugate( m_matrix[ CLD( r, s, m_rows ) ] ) * m_matrix[ CLD( r, lstep, m_rows ) ];
 		}
 
 		for( size_t sr{ 0 }; sr < step; ++sr )
 		{
 			for( size_t sc{ 0 }; sc < step; ++sc )
-				Tmx[ calc_elem_idx_CLD( sr, step, block_size ) ] -= Tmx[ calc_elem_idx_CLD( sr, sc, block_size ) ] * VTv[ sc ];
+				Tmx[ CLD( sr, step, block_size ) ] -= Tmx[ CLD( sr, sc, block_size ) ] * VTv[ sc ];
 
-			Tmx[ calc_elem_idx_CLD( sr, step, block_size ) ] *= m_betas[ lstep ];
+			Tmx[ CLD( sr, step, block_size ) ] *= m_betas[ lstep ];
 		}
 	}
 }
@@ -847,14 +847,14 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		// ==============
 		for( size_t r{ row_step }; r < m_rows; ++r )
 		{
-			double abs_v = abs_val( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] );
+			double abs_v = abs_val( m_matrix[ CLD( r, step, m_rows ) ] );
 			col_norm += abs_v * abs_v;
 		}
 		col_norm = std::sqrt( col_norm );
 
 		// stabilization sign calculation
 		// ==============================
-		auto lead_elem_idx{ calc_elem_idx_CLD( row_step, step, m_rows ) };
+		auto lead_elem_idx{ CLD( row_step, step, m_rows ) };
 		double alpha_abs = abs_val( m_matrix[ lead_elem_idx ] );
 		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ lead_elem_idx ] ) / T{ static_cast< RT >( alpha_abs ) } : T{ -1 } );
 		T sign_norm = sign * T{ static_cast< RT >( col_norm ) };
@@ -866,7 +866,7 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		T vTv{ v1T * v1 };
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
 		{
-			const auto elem_idx{ calc_elem_idx_CLD( r, step, m_rows ) };
+			const auto elem_idx{ CLD( r, step, m_rows ) };
 			vTv += conjugate( m_matrix[ elem_idx ] ) * m_matrix[ elem_idx ];
 		}
 
@@ -888,39 +888,39 @@ void dense_matrix_cuda< T >::QHQ_block_decomposition_cpu( const size_t block_siz
 		//=============
 		for( size_t r{ 0 }; r < m_rows; ++r )
 		{
-			Av[ r ] = m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] * v1;
+			Av[ r ] = m_matrix[ CLD( r, row_step, m_rows ) ] * v1;
 			for( size_t c{ row_step + 1 }; c < m_cols; ++c )
-				Av[ r ] += m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * m_matrix[ calc_elem_idx_CLD( c, step, m_rows ) ];
+				Av[ r ] += m_matrix[ CLD( r, c, m_rows ) ] * m_matrix[ CLD( c, step, m_rows ) ];
 		}
 
 		// calculate vTA ( v*A in case of complex )
 		// ========================================
-		vTA = v1T * m_matrix[ calc_elem_idx_CLD( row_step, row_step, m_rows ) ];
+		vTA = v1T * m_matrix[ CLD( row_step, row_step, m_rows ) ];
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
-			vTA += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ];
+			vTA += conjugate( m_matrix[ CLD( r, step, m_rows ) ] ) * m_matrix[ CLD( r, row_step, m_rows ) ];
 
 		// alpha = v*Av
 		// ============
 		T alpha{ v1T * Av[ row_step ] };
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
-			alpha += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * Av[ r ];
+			alpha += conjugate( m_matrix[ CLD( r, step, m_rows ) ] ) * Av[ r ];
 
 		// update those part of matrix that are changed only by right mult by QT
 		// =====================================================================
 		for( size_t r{ 0 }; r < row_step; ++r )
-			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * Av[ r ] * v1T;
+			m_matrix[ CLD( r, row_step, m_rows ) ] -= beta * Av[ r ] * v1T;
 
 		// update left-upper corner of submatrix
 		// =====================================
-		m_matrix[ calc_elem_idx_CLD( row_step, row_step, m_rows ) ] -=
+		m_matrix[ CLD( row_step, row_step, m_rows ) ] -=
 				beta * ( v1 * vTA + Av[ row_step ] * v1T - beta * alpha * v1 * v1T );
 
 		// update fiest modificated sub col
 		// ================================
 		for( size_t r{ row_step + 1 }; r < m_rows; ++r )
 		{
-			const auto v1{ m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] };
-			m_matrix[ calc_elem_idx_CLD( r, row_step, m_rows ) ] -= beta * ( v1 * ( vTA - beta * alpha * v1T ) + Av[ r ] * v1T );
+			const auto v1{ m_matrix[ CLD( r, step, m_rows ) ] };
+			m_matrix[ CLD( r, row_step, m_rows ) ] -= beta * ( v1 * ( vTA - beta * alpha * v1T ) + Av[ r ] * v1T );
 		}
 	}
 }
@@ -948,27 +948,27 @@ void QR_decomposition_blocked_AVT_gpu( T* AVT,
 	if( active )
 	{
 		int col_idx{ col + row_shift };
-		sum = A_in[ calc_elem_idx_CLD( row, col_idx++, A_rows ) ] * v_firsts[ col ];
+		sum = A_in[ CLD( row, col_idx++, A_rows ) ] * v_firsts[ col ];
 
 		for( ; col_idx < A_cols; ++col_idx )
-			sum += A_in[ calc_elem_idx_CLD( row, col_idx, A_rows ) ] *  V[ calc_elem_idx_CLD( col_idx, threadIdx.x, A_rows ) ];
+			sum += A_in[ CLD( row, col_idx, A_rows ) ] *  V[ CLD( col_idx, threadIdx.x, A_rows ) ];
 
-		AVT[ calc_elem_idx_CLD( row, threadIdx.x, A_rows ) ] = sum;
+		AVT[ CLD( row, threadIdx.x, A_rows ) ] = sum;
 	}
 
 	__syncthreads();
 
 	if( active )
 	{
-		sum = AVT[ calc_elem_idx_CLD( row, 0, A_rows ) ] * TVTA[ calc_elem_idx_CLD( 0, threadIdx.x, block_size ) ];
+		sum = AVT[ CLD( row, 0, A_rows ) ] * TVTA[ CLD( 0, threadIdx.x, block_size ) ];
 		for( int c{ 1 }; c <= threadIdx.x; ++c )
-			sum += AVT[ calc_elem_idx_CLD( row, c, A_rows ) ] * TVTA[ calc_elem_idx_CLD( c, threadIdx.x, block_size ) ];
+			sum += AVT[ CLD( row, c, A_rows ) ] * TVTA[ CLD( c, threadIdx.x, block_size ) ];
 	}
 
 	__syncthreads();
 
 	if( active )
-		AVT[ calc_elem_idx_CLD( row, threadIdx.x, A_rows ) ] = sum;
+		AVT[ CLD( row, threadIdx.x, A_rows ) ] = sum;
 }
 
 template< typename T >
@@ -987,33 +987,32 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 	const int col_b = row_offset + threadIdx.x;
 	const int row = row_offset + threadIdx.y + row_shift;
 	const int row_b = row - row_shift;
+	const int b_size_sq{ block_size * block_size };
 	T sum{};
 
 	extern __shared__ unsigned char sdata_raw[];
 	T* Tmx = reinterpret_cast< T* >( sdata_raw );
+	T* Vblock = Tmx + b_size_sq;
+	T* Ablock = Vblock + b_size_sq;
+	T* VTA    = Ablock + b_size_sq;
 
-	//T* Vblock = reinterpret_cast< T* >( sdata_raw + block_size * block_size * sizeof( T ) );
-	__shared__ T Vblock[ 256 ];
-	__shared__ T Ablock[ 256 ];
-	__shared__ T VTA[ 256 ];
-
-	Tmx[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ] = TVTA[ calc_elem_idx_CLD( threadIdx.x, threadIdx.y, block_size ) ];
+	Tmx[ CLD( threadIdx.x, threadIdx.y, block_size ) ] = TVTA[ CLD( threadIdx.x, threadIdx.y, block_size ) ];
 
 	bool active = !( col >= A_cols || row_b >= row_offset + block_size );
 
 	if( threadIdx.x < threadIdx.y && row < A_rows )
-		Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( A_in[ calc_elem_idx_CLD( row, col_b, A_rows ) ] );
+		Vblock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( A_in[ CLD( row, col_b, A_rows ) ] );
 	else if( threadIdx.x == threadIdx.y )
-		Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( v_firsts[ row_b ] );
+		Vblock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( v_firsts[ row_b ] );
 
 	if( active && row < A_rows )
-		Ablock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = A_in[ calc_elem_idx_CLD( row, col, A_rows ) ];
+		Ablock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = A_in[ CLD( row, col, A_rows ) ];
 
 	__syncthreads();
 
 	if( active )
 		for( unsigned int r{ threadIdx.y }; r < block_size; ++r )
-			sum += Vblock[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] * Ablock[ calc_elem_idx_CLD( r, threadIdx.x, block_size ) ];
+			sum += Vblock[ CLD( r, threadIdx.y, block_size ) ] * Ablock[ CLD( r, threadIdx.x, block_size ) ];
 
 	int block_offset{ col_offset + row_shift };
 	while( block_offset < A_rows )
@@ -1023,24 +1022,24 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 		int t_row{ block_offset + ( int )threadIdx.y };
 
 		if( t_row < A_rows )
-			Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( A_in[ calc_elem_idx_CLD( t_row, col_b, A_rows ) ] );
+			Vblock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = conjugate( A_in[ CLD( t_row, col_b, A_rows ) ] );
 		else
-			Vblock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = T{};
+			Vblock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = T{};
 
 		if( active && t_row < A_rows )
-			Ablock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = A_in[ calc_elem_idx_CLD( t_row, col, A_rows ) ];
+			Ablock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = A_in[ CLD( t_row, col, A_rows ) ];
 		else
-			Ablock[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = T{};
+			Ablock[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = T{};
 
 		__syncthreads();
 
 		for( int r{ 0 }; r < block_size; ++r )
-			sum += Vblock[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] * Ablock[ calc_elem_idx_CLD( r, threadIdx.x, block_size ) ];
+			sum += Vblock[ CLD( r, threadIdx.y, block_size ) ] * Ablock[ CLD( r, threadIdx.x, block_size ) ];
 
 		block_offset += block_size;
 	}
 
-	VTA[ calc_elem_idx_CLD( threadIdx.y, threadIdx.x, block_size ) ] = sum;
+	VTA[ CLD( threadIdx.y, threadIdx.x, block_size ) ] = sum;
 
 	__syncthreads();
 
@@ -1048,9 +1047,9 @@ void QR_decomposition_blocked_TVTA_gpu( T* TVTA,
 	{
 		sum = T{};
 		for( int r{ 0 }; r <= threadIdx.y; ++r )
-			sum += conjugate( Tmx[ calc_elem_idx_CLD( r, threadIdx.y, block_size ) ] ) * VTA[ calc_elem_idx_CLD( r, threadIdx.x, block_size ) ];
+			sum += conjugate( Tmx[ CLD( r, threadIdx.y, block_size ) ] ) * VTA[ CLD( r, threadIdx.x, block_size ) ];
 
-		TVTA[ calc_elem_idx_CLD( threadIdx.y, col, block_size ) ] = sum;
+		TVTA[ CLD( threadIdx.y, col, block_size ) ] = sum;
 	}
 }
 
@@ -1080,11 +1079,11 @@ void QR_decomposition_blocked_VTVTA_gpu( const T* TVTA,
 	for( int c{ 0 }; c < sum_range; ++c )
 	{
 		const int c_i = row_offset + c;
-		const T v_i = ( c == t_row ? v_firsts[ c_i ] : A_out[ calc_elem_idx_CLD( row, c_i, A_rows ) ] );
-		sum += v_i * TVTA[ calc_elem_idx_CLD( c, col, block_size ) ];
+		const T v_i = ( c == t_row ? v_firsts[ c_i ] : A_out[ CLD( row, c_i, A_rows ) ] );
+		sum += v_i * TVTA[ CLD( c, col, block_size ) ];
 	}
 
-	A_out[ calc_elem_idx_CLD( row, col, A_rows ) ] -= sum;
+	A_out[ CLD( row, col, A_rows ) ] -= sum;
 }
 
 template< typename T >
@@ -1109,12 +1108,12 @@ void QR_decomposition_blocked_AVTVT_gpu( const T* AVT,
 	for( int c{ 0 }; c < block_size; ++c )
 	{
 		const T v_i = conjugate( col == col_offset && c == block_size - 1 ?
-				  v_firsts[ row_offset + c ] : A_out[ calc_elem_idx_CLD( col, c + row_offset, A_rows ) ] );
+				  v_firsts[ row_offset + c ] : A_out[ CLD( col, c + row_offset, A_rows ) ] );
 
-		sum += AVT[ calc_elem_idx_CLD( row, c, A_rows ) ] * v_i;
+		sum += AVT[ CLD( row, c, A_rows ) ] * v_i;
 	}
 
-	A_out[ calc_elem_idx_CLD( row, col, A_rows ) ] -= sum;
+	A_out[ CLD( row, col, A_rows ) ] -= sum;
 }
 
 template< typename T >
@@ -1214,7 +1213,7 @@ void dense_matrix_cuda< T >::QHQ_decomposition()
 
 		{
 			dim3 gridDim( div_up( m_cols - step_offset, b_size ), 1 );
-			size_t lmem_size{ b_size * b_size * sizeof( T ) };
+			size_t lmem_size{ 4 * b_size * b_size * sizeof( T ) };
 			QR_decomposition_blocked_TVTA_gpu << < gridDim, blockDim, lmem_size >> > ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 1 );
 		}
 
@@ -1265,14 +1264,14 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 		// ==============
 		for( size_t r{ step }; r < m_rows; ++r )
 		{
-			double abs_v = abs_val( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] );
+			double abs_v = abs_val( m_matrix[ CLD( r, step, m_rows ) ] );
 			col_norm += abs_v * abs_v;
 		}
 		col_norm = std::sqrt( col_norm );
 
 		// stabilization sign calculation
 		// ==============================
-		const size_t step_idx = calc_elem_idx_CLD( step, step, m_rows );
+		const size_t step_idx = CLD( step, step, m_rows );
 
 		double alpha_abs = abs_val( m_matrix[ step_idx ] );
 		T sign = ( alpha_abs != 0.0 ? -( m_matrix[ step_idx ] ) / alpha_abs : T{ -1 } );
@@ -1283,7 +1282,7 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 		T vTv{ conjugate( m_v_firsts[ step ] ) * m_v_firsts[ step ] };
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
-			vTv += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ];
+			vTv += conjugate( m_matrix[ CLD( r, step, m_rows ) ] ) * m_matrix[ CLD( r, step, m_rows ) ];
 
 		m_betas[ step ] = 2.0 / vTv;
 
@@ -1295,19 +1294,19 @@ void dense_matrix_cuda< T >::QR_block_decomposition_cpu( const size_t block_size
 		{
 			const size_t c_in{ c - step_offset };
 
-			vTA[ c_in ] = conjugate( m_v_firsts[ step ] ) * m_matrix[ calc_elem_idx_CLD( step, c, m_rows ) ];
+			vTA[ c_in ] = conjugate( m_v_firsts[ step ] ) * m_matrix[ CLD( step, c, m_rows ) ];
 			for( size_t r{ step + 1 }; r < m_rows; ++r )
-				vTA[ c_in ] += conjugate( m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] ) * m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ];
+				vTA[ c_in ] += conjugate( m_matrix[ CLD( r, step, m_rows ) ] ) * m_matrix[ CLD( r, c, m_rows ) ];
 		}
 
 		// calculate (I-bvvT)A = A - b(v(vTA)) only for first block_size columns
 		// =====================================================================
 		for( size_t c{ step + 1 }; c < l_max_col; ++c )
-			m_matrix[ calc_elem_idx_CLD( step, c, m_rows ) ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c - step_offset ];
+			m_matrix[ CLD( step, c, m_rows ) ] -= m_betas[ step ] * m_v_firsts[ step ] * vTA[ c - step_offset ];
 
 		for( size_t r{ step + 1 }; r < m_rows; ++r )
 			for( size_t c{ step + 1 }; c < l_max_col; ++c )
-				m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( r, step, m_rows ) ] * vTA[ c - step_offset ];
+				m_matrix[ CLD( r, c, m_rows ) ] -= m_betas[ step ] * m_matrix[ CLD( r, step, m_rows ) ] * vTA[ c - step_offset ];
 	}
 }
 
@@ -1389,7 +1388,7 @@ void dense_matrix_cuda< T >::QR_decomposition( bool scaling, const size_t block_
 
 		dim3 blockDim( b_size, b_size );
 		dim3 grid1Dim( div_up( m_cols - step_offset, b_size ), 1 );
-		size_t lmem_size{ b_size * b_size * sizeof( T ) };
+		size_t lmem_size{ 4 * b_size * b_size * sizeof( T ) };
 		QR_decomposition_blocked_TVTA_gpu << < grid1Dim, blockDim, lmem_size >> > ( d_TVTA, d_matrix, d_v_firsts, m_rows, m_cols, b_size, row_offset, step_offset, 0 );
 
 		dim3 grid2Dim( div_up( m_cols - step_offset, b_size ), div_up( m_rows - row_offset, b_size ) );
@@ -1446,7 +1445,7 @@ void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< DT >& x, c
 	// ============
 	for( size_t row{ 0 }; row < m_rows; ++row )
 		for( size_t col{ row }; col < m_cols; ++col )
-			w[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] ) );
+			w[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ RLD( m_p_row[ row ], col, m_cols ) ] ) );
 
 
 	// compute r = Lw - b
@@ -1456,7 +1455,7 @@ void dense_matrix_cuda< T >::count_residual_LUx_b( const std::vector< DT >& x, c
 		r[ m_p_row[ row ] ] = w[ row ] - ( b[ m_p_row[ row ] ] * static_cast< DT >( m_scalars[ m_p_row[ row ] ] ) );
 
 		for( size_t col{ 0 }; col < row; ++col )
-			r[ m_p_row[ row ] ] += w[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_RLD( m_p_row[ row ], col, m_cols ) ] );
+			r[ m_p_row[ row ] ] += w[ col ] * static_cast< DT >( m_matrix[ RLD( m_p_row[ row ], col, m_cols ) ] );
 
 		r[ m_p_row[ row ] ] /= static_cast< DT >( m_scalars[ m_p_row[ row ] ] );
 	}
@@ -1476,7 +1475,7 @@ void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< DT >& x, c
 	{
 		r[ row ] = DT{};
 		for( size_t col{ row }; col < m_cols; ++col )
-			r[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ calc_elem_idx_CLD( row, col, m_rows ) ] )
+			r[ row ] += ( x[ col ] * static_cast< DT >( m_matrix[ CLD( row, col, m_rows ) ] )
 				/ static_cast< DT >( m_scalars[ col ] ) );
 	}
 
@@ -1484,11 +1483,11 @@ void dense_matrix_cuda< T >::count_residual_QRx_b( const std::vector< DT >& x, c
 	{
 		DT vRx{ conjugate( static_cast< DT >( m_v_firsts[ step ] ) ) * r[ step ] };
 		for( int s{ step + 1 }; s < static_cast< int >( m_rows ); ++s )
-			vRx += conjugate( static_cast< DT >( m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] ) ) * r[ s ];
+			vRx += conjugate( static_cast< DT >( m_matrix[ CLD( s, step, m_rows ) ] ) ) * r[ s ];
 
 		r[ step ] -= static_cast< DT >( m_betas[ step ] * m_v_firsts[ step ] ) * vRx;
 		for( int s{ step + 1 }; s < static_cast< int >( m_rows ); ++s )
-			r[ s ] -= static_cast< DT >( m_betas[ step ] * m_matrix[ calc_elem_idx_CLD( s, step, m_rows ) ] ) * vRx;
+			r[ s ] -= static_cast< DT >( m_betas[ step ] * m_matrix[ CLD( s, step, m_rows ) ] ) * vRx;
 	}
 
 	for( size_t row{ 0 }; row < m_rows; ++row )
@@ -1664,8 +1663,8 @@ void dense_matrix_cuda< T >::QR_get_eigenvalues_from_block( const size_t shift, 
 {
 	using CT = thrust::complex< C1 >;
 
-	CT a{ m_matrix[ calc_elem_idx_CLD( shift, shift, m_rows ) ] }, b{ m_matrix[ calc_elem_idx_CLD( shift, shift + 1, m_rows ) ] },		
-		c{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift, m_rows ) ] }, d{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift + 1, m_rows ) ] };
+	CT a{ m_matrix[ CLD( shift, shift, m_rows ) ] }, b{ m_matrix[ CLD( shift, shift + 1, m_rows ) ] },		
+		c{ m_matrix[ CLD( shift + 1, shift, m_rows ) ] }, d{ m_matrix[ CLD( shift + 1, shift + 1, m_rows ) ] };
 
 	CT tr{ a + d };
 	CT det{ a * d - b * c };
@@ -1691,7 +1690,7 @@ void dense_matrix_cuda< T >::QR_get_eigenvalues( std::vector< thrust::complex< C
 			break;
 
 		case 1:
-			l[ block_begin ] = static_cast< CT >( m_matrix[ calc_elem_idx_CLD( block_begin, block_begin, m_rows ) ] );			
+			l[ block_begin ] = static_cast< CT >( m_matrix[ CLD( block_begin, block_begin, m_rows ) ] );			
 			break;
 
 		default:
@@ -1713,7 +1712,7 @@ bool dense_matrix_cuda< T >::QHQ_NxN_with_shifts( const size_t row_shift, const 
 	{
 		v.resize( block_size );
 		for( size_t i{ row_shift }; i < min( m_rows, row_shift + block_size ); ++i )
-			v[ i - row_shift ] = m_matrix[ calc_elem_idx_CLD( i, col_shift, m_rows ) ];
+			v[ i - row_shift ] = m_matrix[ CLD( i, col_shift, m_rows ) ];
 	}
 
 	double col_norm{ 0.0 };
@@ -1741,9 +1740,9 @@ bool dense_matrix_cuda< T >::QHQ_NxN_with_shifts( const size_t row_shift, const 
 
 	if( !use_spec_v )
 	{
-		m_matrix[ calc_elem_idx_CLD( row_shift, col_shift, m_rows ) ] = sign_norm;		
+		m_matrix[ CLD( row_shift, col_shift, m_rows ) ] = sign_norm;		
 		for( size_t i{ row_shift + 1 }; i < min( m_rows, row_shift + block_size ); ++i )
-			m_matrix[ calc_elem_idx_CLD( i, col_shift, m_rows ) ] = T{};		
+			m_matrix[ CLD( i, col_shift, m_rows ) ] = T{};		
 	}
 
 	if( abs_val( vTv ) < std::numeric_limits< RT >::epsilon() )
@@ -1760,11 +1759,11 @@ bool dense_matrix_cuda< T >::QHQ_NxN_with_shifts( const size_t row_shift, const 
 
 	for( size_t c{ use_spec_v ? col_shift : col_nshift }; c < m_cols; ++c )
 		for( size_t i{ row_shift }; i < min( m_rows, row_shift + block_size ); ++i )
-			vTA[ c ] += vT[ i - row_shift ] * m_matrix[ calc_elem_idx_CLD( i, c, m_rows ) ];
+			vTA[ c ] += vT[ i - row_shift ] * m_matrix[ CLD( i, c, m_rows ) ];
 
 	for( size_t c{ use_spec_v ? col_shift : col_nshift }; c < m_cols; ++c )
 		for( size_t i{ row_shift }; i < min( m_rows, row_shift + block_size ); ++i )
-			m_matrix[ calc_elem_idx_CLD( i, c, m_rows ) ] -= beta * v[ i - row_shift ] * vTA[ c ];
+			m_matrix[ CLD( i, c, m_rows ) ] -= beta * v[ i - row_shift ] * vTA[ c ];
 
 	// A <- A' - beta * ( A' v ) vT
 	// ============================
@@ -1772,11 +1771,11 @@ bool dense_matrix_cuda< T >::QHQ_NxN_with_shifts( const size_t row_shift, const 
 
 	for( size_t r{ 0 }; r < std::min( row_nshift + block_size, block_end ); ++r )
 		for( size_t i{ row_shift }; i < min( m_cols, row_shift + block_size ); ++i )
-			Av[ r ] += m_matrix[ calc_elem_idx_CLD( r, i, m_rows ) ] * v[ i - row_shift ];
+			Av[ r ] += m_matrix[ CLD( r, i, m_rows ) ] * v[ i - row_shift ];
 
 	for( size_t r{ 0 }; r < std::min( row_nshift + block_size, block_end ); ++r )
 		for( size_t i{ row_shift }; i < min( m_cols, row_shift + block_size ); ++i )
-			m_matrix[ calc_elem_idx_CLD( r, i, m_rows ) ] -= beta * Av[ r ] * vT[ i - row_shift ];
+			m_matrix[ CLD( r, i, m_rows ) ] -= beta * Av[ r ] * vT[ i - row_shift ];
 
 	return true;
 }
@@ -1784,17 +1783,17 @@ bool dense_matrix_cuda< T >::QHQ_NxN_with_shifts( const size_t row_shift, const 
 template< typename T >
 std::vector< T > dense_matrix_cuda< T >::get_Francis_v( const size_t shift, const size_t block_end ) const
 {
-	const T a{ m_matrix[ calc_elem_idx_CLD( block_end - 1, block_end - 1, m_rows ) ] },
-		b{ m_matrix[ calc_elem_idx_CLD( block_end - 1, block_end, m_rows ) ] },
-		c{ m_matrix[ calc_elem_idx_CLD( block_end, block_end - 1, m_rows ) ] },
-		d{ m_matrix[ calc_elem_idx_CLD( block_end, block_end, m_rows ) ] };
+	const T a{ m_matrix[ CLD( block_end - 1, block_end - 1, m_rows ) ] },
+		b{ m_matrix[ CLD( block_end - 1, block_end, m_rows ) ] },
+		c{ m_matrix[ CLD( block_end, block_end - 1, m_rows ) ] },
+		d{ m_matrix[ CLD( block_end, block_end, m_rows ) ] };
 	const T tr{ a + d }, det{ a * d - b * c };
-	const T a11{ m_matrix[ calc_elem_idx_CLD( shift, shift, m_rows ) ] }, a12{ m_matrix[ calc_elem_idx_CLD( shift, shift + 1, m_rows ) ] },
-		a21{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift, m_rows ) ] }, a22{ m_matrix[ calc_elem_idx_CLD( shift + 1, shift + 1, m_rows ) ] };
+	const T a11{ m_matrix[ CLD( shift, shift, m_rows ) ] }, a12{ m_matrix[ CLD( shift, shift + 1, m_rows ) ] },
+		a21{ m_matrix[ CLD( shift + 1, shift, m_rows ) ] }, a22{ m_matrix[ CLD( shift + 1, shift + 1, m_rows ) ] };
 	T a32{};
 
 	if( shift < m_rows - 2 )
-		a32 = m_matrix[ calc_elem_idx_CLD( shift + 2, shift + 1, m_rows ) ];
+		a32 = m_matrix[ CLD( shift + 2, shift + 1, m_rows ) ];
 
 	std::vector< T > v{ a11 * a11 + a21 * a12 - tr * a11 + det,
 						a11 * a21 + a21 * a22 - tr * a21,
@@ -1818,7 +1817,7 @@ void dense_matrix_cuda< T >::apply_VQ_step( dense_matrix_cuda& SV, const size_t 
 		reflector.resize( col_len );
 		reflector[ 0 ] = m_v_firsts[ col_shift ];
 		for( size_t i{ 1 }; i < col_len; ++i )
-			reflector[ i ] = m_matrix[ calc_elem_idx_CLD( row_shift + i, col_shift, m_rows ) ];		
+			reflector[ i ] = m_matrix[ CLD( row_shift + i, col_shift, m_rows ) ];		
 		v = &reflector;
 	}
 
@@ -1828,13 +1827,13 @@ void dense_matrix_cuda< T >::apply_VQ_step( dense_matrix_cuda& SV, const size_t 
 	//=============
 	for( size_t r{ 0 }; r < m_rows; ++r )
 		for( size_t c{ row_shift }; c < col_end; ++c )
-			Vv[ r ] += SV.m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] * ( *v )[ c - row_shift ];
+			Vv[ r ] += SV.m_matrix[ CLD( r, c, m_rows ) ] * ( *v )[ c - row_shift ];
 
 	// update V matrix
 	// ===============
 	for( size_t r{ 0 }; r < m_rows; ++r )
 		for( size_t c{ row_shift }; c < col_end; ++c )
-			SV.m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] -= beta * Vv[ r ] * conjugate( ( *v )[ c - row_shift ] );
+			SV.m_matrix[ CLD( r, c, m_rows ) ] -= beta * Vv[ r ] * conjugate( ( *v )[ c - row_shift ] );
 
 }
 
@@ -1863,16 +1862,16 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 		switch( lead_block_size )
 		{
 		case 1:
-			EV.m_matrix[ calc_elem_idx_CLD( i, i0, m_rows ) ] = val;
+			EV.m_matrix[ CLD( i, i0, m_rows ) ] = val;
 			break;
 		case 2:
 		{
-			const auto mi0{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i0, i0, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
-			const auto mi1{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i01, i01, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
-			EV.m_matrix[ calc_elem_idx_CLD( i0, i, m_rows ) ] = -val * ( abs_val( mi0 ) > abs_val( m_matrix[ calc_elem_idx_CLD( i01, i0, m_rows ) ] ) ?
-				static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i0, i01, m_rows ) ] ) / mi0 :
-				mi1 / static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( i01, i0, m_rows ) ] ) );
-			EV.m_matrix[ calc_elem_idx_CLD( i01, i, m_rows ) ] = val;
+			const auto mi0{ static_cast< CT2 >( m_matrix[ CLD( i0, i0, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+			const auto mi1{ static_cast< CT2 >( m_matrix[ CLD( i01, i01, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+			EV.m_matrix[ CLD( i0, i, m_rows ) ] = -val * ( abs_val( mi0 ) > abs_val( m_matrix[ CLD( i01, i0, m_rows ) ] ) ?
+				static_cast< CT2 >( m_matrix[ CLD( i0, i01, m_rows ) ] ) / mi0 :
+				mi1 / static_cast< CT2 >( m_matrix[ CLD( i01, i0, m_rows ) ] ) );
+			EV.m_matrix[ CLD( i01, i, m_rows ) ] = val;
 			break;
 		}
 		default:
@@ -1891,13 +1890,13 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 			case 1:
 			{
 				if( abs_val( lambda - l[ j0 ] ) <= std::numeric_limits< C1 >::epsilon() )
-					EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = val;
+					EV.m_matrix[ CLD( j0, i, m_rows ) ] = val;
 				else
 				{
 					CT2 b{};
 					for( size_t j{ j1 }; j < i1; ++j )
-						b -= static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j, m_rows ) ] ) * EV.m_matrix[ calc_elem_idx_CLD( j, i, m_rows ) ];
-					EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = b / ( static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< CT2 >( lambda ) );
+						b -= static_cast< CT2 >( m_matrix[ CLD( j0, j, m_rows ) ] ) * EV.m_matrix[ CLD( j, i, m_rows ) ];
+					EV.m_matrix[ CLD( j0, i, m_rows ) ] = b / ( static_cast< CT2 >( m_matrix[ CLD( j0, j0, m_rows ) ] ) - static_cast< CT2 >( lambda ) );
 				}
 				break;
 			}
@@ -1906,12 +1905,12 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 				if( abs_val( lambda - l[ j0 ] ) <= std::numeric_limits< C1 >::epsilon() ||
 					abs_val( lambda - l[ j01 ] ) <= std::numeric_limits< C1 >::epsilon() )
 				{
-					const auto mj0{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
-					const auto mj1{ static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j01, j01, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
-					EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = -val * ( abs_val( mj0 ) > abs_val( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] ) ?
-						static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j0, j01, m_rows ) ] ) / mj0 :
-						mj1 / static_cast< CT2 >( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] ) );
-					EV.m_matrix[ calc_elem_idx_CLD( j01, i, m_rows ) ] = val;
+					const auto mj0{ static_cast< CT2 >( m_matrix[ CLD( j0, j0, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+					const auto mj1{ static_cast< CT2 >( m_matrix[ CLD( j01, j01, m_rows ) ] ) - static_cast< CT2 >( lambda ) };
+					EV.m_matrix[ CLD( j0, i, m_rows ) ] = -val * ( abs_val( mj0 ) > abs_val( m_matrix[ CLD( j01, j0, m_rows ) ] ) ?
+						static_cast< CT2 >( m_matrix[ CLD( j0, j01, m_rows ) ] ) / mj0 :
+						mj1 / static_cast< CT2 >( m_matrix[ CLD( j01, j0, m_rows ) ] ) );
+					EV.m_matrix[ CLD( j01, i, m_rows ) ] = val;
 					break;
 				}
 				else
@@ -1921,20 +1920,20 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 					{
 						const size_t row{ j0 + r };
 						for( size_t j{ j1 }; j < i1; ++j )
-							b[ r ] -= static_cast< DC >( m_matrix[ calc_elem_idx_CLD( row, j, m_rows ) ] ) * static_cast< DC >( EV.m_matrix[ calc_elem_idx_CLD( j, i, m_rows ) ] );
+							b[ r ] -= static_cast< DC >( m_matrix[ CLD( row, j, m_rows ) ] ) * static_cast< DC >( EV.m_matrix[ CLD( j, i, m_rows ) ] );
 
 						dense_matrix_cuda< DC > M2x2( DYNAMIC_STATE::ROL_INIT, this_block_size, this_block_size );
-						M2x2.m_matrix[ calc_elem_idx_RLD( 0, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j0, m_rows ) ] ) - static_cast< DC >( lambda );
-						M2x2.m_matrix[ calc_elem_idx_RLD( 0, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j0, j01, m_rows ) ] );
-						M2x2.m_matrix[ calc_elem_idx_RLD( 1, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j0, m_rows ) ] );
-						M2x2.m_matrix[ calc_elem_idx_RLD( 1, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ calc_elem_idx_CLD( j01, j01, m_rows ) ] ) - static_cast< DC >( lambda );
+						M2x2.m_matrix[ RLD( 0, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ CLD( j0, j0, m_rows ) ] ) - static_cast< DC >( lambda );
+						M2x2.m_matrix[ RLD( 0, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ CLD( j0, j01, m_rows ) ] );
+						M2x2.m_matrix[ RLD( 1, 0, this_block_size ) ] = static_cast< DC >( m_matrix[ CLD( j01, j0, m_rows ) ] );
+						M2x2.m_matrix[ RLD( 1, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ CLD( j01, j01, m_rows ) ] ) - static_cast< DC >( lambda );
 
 						std::vector< DC > x( this_block_size, DC{} );
 						M2x2.LU_decomposition( true, this_block_size );
 						M2x2.solve_LU( x, b );
 
-						EV.m_matrix[ calc_elem_idx_CLD( j0, i, m_rows ) ] = static_cast< CT2 >( x[ 0 ] );
-						EV.m_matrix[ calc_elem_idx_CLD( j01, i, m_rows ) ] = static_cast< CT2 >( x[ 1 ] );
+						EV.m_matrix[ CLD( j0, i, m_rows ) ] = static_cast< CT2 >( x[ 0 ] );
+						EV.m_matrix[ CLD( j01, i, m_rows ) ] = static_cast< CT2 >( x[ 1 ] );
 					}
 				}
 
@@ -1989,7 +1988,7 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 	// ===================================================
 	for( size_t r{ 2 }; r < m_rows; ++r )
 		for( size_t c{ 0 }; c < r - 1; ++c )
-			m_matrix[ calc_elem_idx_CLD( r, c, m_rows ) ] = T{};
+			m_matrix[ CLD( r, c, m_rows ) ] = T{};
 
 	std::map< size_t, size_t > blocks, final_blocks;
 	std::map< size_t, double > b2x2_deflacc;
@@ -2006,11 +2005,11 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 			{
 				auto ii{ i + 1 };
 
-				if( abs_val( m_matrix[ calc_elem_idx_CLD( ii, i, m_rows ) ] )
-					<= acc * ( abs_val( m_matrix[ calc_elem_idx_CLD( i, i, m_rows ) ] ) +
-							   abs_val( m_matrix[ calc_elem_idx_CLD( ii, ii, m_rows ) ] ) ) )
+				if( abs_val( m_matrix[ CLD( ii, i, m_rows ) ] )
+					<= acc * ( abs_val( m_matrix[ CLD( i, i, m_rows ) ] ) +
+							   abs_val( m_matrix[ CLD( ii, ii, m_rows ) ] ) ) )
 				{
-					m_matrix[ calc_elem_idx_CLD( ii, i, m_rows ) ] = T{};
+					m_matrix[ CLD( ii, i, m_rows ) ] = T{};
 					blocks[ ii ] = block_end;
 					block_end = ii;
 					break;
@@ -2028,7 +2027,7 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 
 			if( b_size == 2 )
 			{
-				auto ndefacc{ abs_val( m_matrix[ calc_elem_idx_CLD( i01, i0, m_rows ) ] ) };				
+				auto ndefacc{ abs_val( m_matrix[ CLD( i01, i0, m_rows ) ] ) };				
 				auto defacc = b2x2_deflacc.find( i0 );
 
 				if( defacc == b2x2_deflacc.end() )
@@ -2058,9 +2057,9 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 
 			// Rayleigh shifting
 			// =================
-			const T mu{ m_matrix[ calc_elem_idx_CLD( block_end - 1, block_end - 1, m_rows ) ] };			
+			const T mu{ m_matrix[ CLD( block_end - 1, block_end - 1, m_rows ) ] };			
 			for( auto i{ block_begin }; i < block_end; ++i )
-				m_matrix[ calc_elem_idx_CLD( i, i, m_rows ) ] -= mu;
+				m_matrix[ CLD( i, i, m_rows ) ] -= mu;
 
 			// QR Hessenberg reduction
 			// =======================
@@ -2074,7 +2073,7 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 			// Rayleigh shifting back
 			// ======================
 			for( auto i{ block_begin }; i < block_end; ++i )
-				m_matrix[ calc_elem_idx_CLD( i, i, m_rows ) ] += mu;
+				m_matrix[ CLD( i, i, m_rows ) ] += mu;
 		}
 	}
 
