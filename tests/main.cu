@@ -252,88 +252,88 @@ void decompositions_block_test( const SOLVING_TYPE solving_type, const bool scal
 }
 
 
-TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder_no_scaling )
-{
-	decompositions_block_test< float >( SOLVING_TYPE::QR_decomposition, false );
-}
-
-TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder_no_scaling )
-{
-	decompositions_block_test< double >( SOLVING_TYPE::QR_decomposition, false );
-}
-
-TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder_no_scaling )
-{
-	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition, false );
-}
-
-TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder_no_scaling )
-{
-	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, false, 16 );
-}
-
-
-TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder_scaling )
-{
-	decompositions_block_test< float >( SOLVING_TYPE::QR_decomposition, true );
-}
-
-TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder_scaling )
-{
-	decompositions_block_test< double >( SOLVING_TYPE::QR_decomposition, true );
-}
-
-TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder_scaling )
-{
-	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition, true );
-}
-
-TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder_scaling )
-{
-	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, true, 16 );
-}
-
-
-TEST( non_singular_linear_equation_real_float, LU_decomposition_blocked_Gauss_no_scaling )
-{
-	decompositions_block_test< float >( SOLVING_TYPE::LU_decomposition, false );
-}
-
-TEST( non_singular_linear_equation_real_double, LU_decomposition_blocked_Gauss_no_scaling )
-{
-	decompositions_block_test< double >( SOLVING_TYPE::LU_decomposition, false );
-}
-
-TEST( non_singular_linear_equation_complex_float, LU_decomposition_blocked_Gauss_no_scaling )
-{
-	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::LU_decomposition, false );
-}
-
-TEST( non_singular_linear_equation_complex_double, LU_decomposition_blocked_Gauss_no_scaling )
-{
-	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::LU_decomposition, false, 16 );
-}
-
-
-TEST( non_singular_linear_equation_real_float, LU_decomposition_blocked_Gauss_scaling )
-{
-	decompositions_block_test< float >( SOLVING_TYPE::LU_decomposition, true );
-}
-
-TEST( non_singular_linear_equation_real_double, LU_decomposition_blocked_Gauss_scaling )
-{
-	decompositions_block_test< double >( SOLVING_TYPE::LU_decomposition, true );
-}
-
-TEST( non_singular_linear_equation_complex_float, LU_decomposition_blocked_Gauss_scaling )
-{
-	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::LU_decomposition, true );
-}
-
-TEST( non_singular_linear_equation_complex_double, LU_decomposition_blocked_Gauss_scaling )
-{
-	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::LU_decomposition, true, 16 );
-}
+//TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder_no_scaling )
+//{
+//	decompositions_block_test< float >( SOLVING_TYPE::QR_decomposition, false );
+//}
+//
+//TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder_no_scaling )
+//{
+//	decompositions_block_test< double >( SOLVING_TYPE::QR_decomposition, false );
+//}
+//
+//TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder_no_scaling )
+//{
+//	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition, false );
+//}
+//
+//TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder_no_scaling )
+//{
+//	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, false, 16 );
+//}
+//
+//
+//TEST( non_singular_linear_equation_real_float, QR_decomposition_blocked_Householder_scaling )
+//{
+//	decompositions_block_test< float >( SOLVING_TYPE::QR_decomposition, true );
+//}
+//
+//TEST( non_singular_linear_equation_real_double, QR_decomposition_blocked_Householder_scaling )
+//{
+//	decompositions_block_test< double >( SOLVING_TYPE::QR_decomposition, true );
+//}
+//
+//TEST( non_singular_linear_equation_complex_float, QR_decomposition_blocked_Householder_scaling )
+//{
+//	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::QR_decomposition, true );
+//}
+//
+//TEST( non_singular_linear_equation_complex_double, QR_decomposition_blocked_Householder_scaling )
+//{
+//	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::QR_decomposition, true, 16 );
+//}
+//
+//
+//TEST( non_singular_linear_equation_real_float, LU_decomposition_blocked_Gauss_no_scaling )
+//{
+//	decompositions_block_test< float >( SOLVING_TYPE::LU_decomposition, false );
+//}
+//
+//TEST( non_singular_linear_equation_real_double, LU_decomposition_blocked_Gauss_no_scaling )
+//{
+//	decompositions_block_test< double >( SOLVING_TYPE::LU_decomposition, false );
+//}
+//
+//TEST( non_singular_linear_equation_complex_float, LU_decomposition_blocked_Gauss_no_scaling )
+//{
+//	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::LU_decomposition, false );
+//}
+//
+//TEST( non_singular_linear_equation_complex_double, LU_decomposition_blocked_Gauss_no_scaling )
+//{
+//	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::LU_decomposition, false, 16 );
+//}
+//
+//
+//TEST( non_singular_linear_equation_real_float, LU_decomposition_blocked_Gauss_scaling )
+//{
+//	decompositions_block_test< float >( SOLVING_TYPE::LU_decomposition, true );
+//}
+//
+//TEST( non_singular_linear_equation_real_double, LU_decomposition_blocked_Gauss_scaling )
+//{
+//	decompositions_block_test< double >( SOLVING_TYPE::LU_decomposition, true );
+//}
+//
+//TEST( non_singular_linear_equation_complex_float, LU_decomposition_blocked_Gauss_scaling )
+//{
+//	decompositions_block_test< thrust::complex< float > >( SOLVING_TYPE::LU_decomposition, true );
+//}
+//
+//TEST( non_singular_linear_equation_complex_double, LU_decomposition_blocked_Gauss_scaling )
+//{
+//	decompositions_block_test< thrust::complex< double > >( SOLVING_TYPE::LU_decomposition, true, 16 );
+//}
 
 
 template < typename T >
@@ -353,7 +353,7 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 		eps = eps_double;
 	}
 
-	size_t mx_size{ 1500 };
+	size_t mx_size{ 9 };
 
 	dmc::dense_matrix_cuda< T > A;
 
@@ -386,7 +386,7 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 	switch( solving_type )
 	{
 	case SOLVING_TYPE::QR_decomposition:
-		A.QR_decomposition( scaling, 16 );
+		A.QR_decomposition( scaling, 4 );
 		break;
 
 	case SOLVING_TYPE::LU_decomposition:

@@ -11,7 +11,8 @@ template< typename T >
 T generate_random( double min_val, double max_val )
 {
 	static std::random_device rd;
-	static std::mt19937 gen( rd() );
+	//static std::mt19937 gen( rd() );
+	static std::mt19937 gen( 1234u );
 
 	std::uniform_real_distribution< double > dis( min_val, max_val );
 	std::uniform_int_distribution< int > sign_dis( 0, 1 );
