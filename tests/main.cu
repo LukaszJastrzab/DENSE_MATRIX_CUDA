@@ -53,7 +53,7 @@ void generate_hermitian_rand_matrix( dmc::dense_matrix_cuda< T >& mx, double val
 template < typename T >
 void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 {
-	size_t mx_size{ 9 };
+	size_t mx_size{ 25 };
 
 	// double type used in solving / refinement
 	using DT = typename double_type< T >::type;
