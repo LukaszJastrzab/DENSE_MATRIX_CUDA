@@ -190,6 +190,8 @@ private:
 
 };
 
+#define MBLOCK_SIZE 4
+
 __host__ __device__ __forceinline__
 size_t RLD( size_t row, size_t col, size_t cols )
 {
@@ -203,6 +205,25 @@ size_t CLD( size_t row, size_t col, size_t rows )
 	// column majority
 	return row + col * rows;
 }
+
+
+struct row_major
+{
+	__host__ __device__
+		size_t operator()( size_t row, size_t col, size_t cols ) const
+	{
+		return RLD( row, col, cols );
+	}
+};
+
+struct column_major
+{
+	__host__ __device__
+		size_t operator()( size_t row, size_t col, size_t rows ) const
+	{
+		return CLD( row, col, rows );
+	}
+};
 
 template< typename T >
 inline size_t dense_matrix_cuda< T >::calc_elem_idx( size_t row, size_t col ) const
@@ -411,6 +432,46 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 	if( A.m_cols != B.m_rows )
 		throw std::invalid_argument( "dense_matrix_cuda: operator* - A.m_cols != B.m_rows" );
 
+	bool A_COL{ true }, B_COL{ true };
+
+	switch( A.m_dynamic_state )
+	{
+	case DYNAMIC_STATE::COL_INIT:
+	case DYNAMIC_STATE::EIGEN_VECTORS:
+	case DYNAMIC_STATE::SCHUR_VECTORS:
+		break;
+	case DYNAMIC_STATE::ROL_INIT:
+		A_COL = false;
+		break;
+	default:
+		throw std::invalid_argument( "dense_matrix_cuda: operator* - wrong A.m_dynamic_state" );
+	}
+
+	switch( B.m_dynamic_state )
+	{
+	case DYNAMIC_STATE::COL_INIT:
+	case DYNAMIC_STATE::EIGEN_VECTORS:
+	case DYNAMIC_STATE::SCHUR_VECTORS:
+		break;
+	case DYNAMIC_STATE::ROL_INIT:
+		B_COL = false;
+		break;
+	default:
+		throw std::invalid_argument( "dense_matrix_cuda: operator* - wrong B.m_dynamic_state" );
+	}
+
+	// test
+	if( A_COL )
+		print_matrix( A.m_matrix, A.m_rows, A.m_cols, column_major{}, A.m_rows );
+	else
+		print_matrix( A.m_matrix, A.m_rows, A.m_cols, row_major{}, A.m_cols );
+
+	if( B_COL )
+		print_matrix( B.m_matrix, B.m_rows, B.m_cols, column_major{}, B.m_rows );
+	else
+		print_matrix( B.m_matrix, B.m_rows, B.m_cols, row_major{}, B.m_cols );
+	// test
+
 	using R = std::common_type_t< U, V >;
 
 	dense_matrix_cuda< R > result( A.m_dynamic_state, A.m_rows, B.m_cols );
@@ -423,6 +484,49 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 				mult_sum += static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, i ) ] ) * static_cast< R >( B.m_matrix[ B.calc_elem_idx( i, c ) ] );
 			result.set_element( mult_sum, r, c );
 		}
+
+	// test
+	print_matrix( result.m_matrix, A.m_rows, B.m_cols, column_major{}, B.m_rows );
+	// test
+
+	// new
+	R* d_result{ nullptr };
+	U* d_A{ nullptr };
+	V* d_B{ nullptr };
+	cudaMalloc( &d_result, A.m_rows * B.m_cols * sizeof( R ) );
+	cudaMalloc( &d_A, A.m_rows * A.m_cols * sizeof( U ) );
+	cudaMalloc( &d_B, B.m_rows * B.m_cols * sizeof( V ) );
+
+	cudaMemcpy( d_A, A.m_matrix.data(), A.m_rows * A.m_cols * sizeof( U ), cudaMemcpyHostToDevice );
+	cudaMemcpy( d_B, B.m_matrix.data(), B.m_rows * B.m_cols * sizeof( V ), cudaMemcpyHostToDevice );
+
+	const dim3 block_dim( MBLOCK_SIZE, MBLOCK_SIZE );
+	const dim3 grid_dim( div_up( B.m_cols, MBLOCK_SIZE ), div_up( A.m_rows, MBLOCK_SIZE ) );
+
+	if( !A_COL && !B_COL )
+		matrix_product <<< grid_dim, block_dim >>> ( d_result, d_A, d_B, A.m_rows, B.m_cols, A.m_cols, row_major{}, A.m_cols, row_major{}, B.m_cols );
+	if( !A_COL && B_COL )
+		matrix_product <<< grid_dim, block_dim >>> ( d_result, d_A, d_B, A.m_rows, B.m_cols, A.m_cols, row_major{}, A.m_cols, column_major{}, B.m_rows );
+	if( A_COL && !B_COL )
+		matrix_product <<< grid_dim, block_dim >>> ( d_result, d_A, d_B, A.m_rows, B.m_cols, A.m_cols, column_major{}, A.m_rows, row_major{}, B.m_cols );
+	if( A_COL && B_COL )
+		matrix_product <<< grid_dim, block_dim >>> ( d_result, d_A, d_B, A.m_rows, B.m_cols, A.m_cols, column_major{}, A.m_rows, column_major{}, B.m_rows );
+
+	//dense_matrix_cuda< R > result2;
+	std::vector< R > mresult( A.m_rows * B.m_cols, R{} );
+	cudaMemcpy( mresult.data(), d_result, A.m_rows * B.m_cols * sizeof( R ), cudaMemcpyDeviceToHost );
+
+	// test
+	std::vector< R > diff( A.m_rows * B.m_cols, R{} );
+	for( int i{ 0 }; i < diff.size(); ++i )
+		diff[ i ] = result.m_matrix[ i ] - mresult[ i ];
+	// test
+
+
+	cudaFree( d_result );
+	cudaFree( d_A );
+	cudaFree( d_B );
+	// new
 
 	return result;
 }
@@ -466,7 +570,7 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const V& b, const den
 {
 	using R = std::common_type_t< U, V >;
 
-	dense_matrix_cuda< R > result( A.m_rows, A.m_cols );
+	dense_matrix_cuda< R > result( A.m_dynamic_state, A.m_rows, A.m_cols );
 
 	for( size_t r{ 0 }; r < A.m_rows; ++r )
 		for( size_t c{ 0 }; c < A.m_cols; ++c )
@@ -551,6 +655,67 @@ void dense_matrix_cuda< T >::LU_block_decomposition_cpu( const size_t block_size
 				m_matrix[ RLD( eliminated_row, col, m_cols ) ] -= eliminator * m_matrix[ RLD( eliminating_row, col, m_cols ) ];
 		}
 	}
+}
+
+
+template< typename TR, typename TA, typename TB, typename A_layout, typename B_layout >
+__global__
+void matrix_product(
+	TR* out,
+	const TA* A,
+	const TB* B,
+	const int A_rows,
+	const int B_cols,
+	const int S_range,
+	const A_layout A_idx,
+	const int A_follow_dim,
+	const B_layout B_idx,
+	const int B_follow_dim )
+{
+	const unsigned int col = threadIdx.x + blockDim.x * blockIdx.x;
+	const unsigned int row = threadIdx.y + blockDim.y * blockIdx.y;
+
+	const bool row_active{ row < A_rows };
+	const bool col_active{ col < B_cols };
+
+
+	// test
+	//if( blockIdx.y == 1 && blockIdx.x == 0 )
+	if( threadIdx.x == 1 && threadIdx.y == 0 )
+	{
+		int test = 7;
+	}
+	// test
+
+	__shared__ TR Ablock[ MBLOCK_SIZE ][ MBLOCK_SIZE ];
+	__shared__ TR Bblock[ MBLOCK_SIZE ][ MBLOCK_SIZE ];
+
+
+	TR sum{};
+
+	for( int block_offset{ 0 }; block_offset < S_range; block_offset += MBLOCK_SIZE )
+	{
+		int col_in = threadIdx.x + block_offset;
+		if( row_active && col_in < S_range )
+			Ablock[ threadIdx.y ][ threadIdx.x ] = static_cast< TR >( A[ A_idx( row, col_in, A_follow_dim ) ] );
+
+		int row_in = threadIdx.y + block_offset;
+		if( col_active && row_in < S_range )
+			Bblock[ threadIdx.y ][ threadIdx.x ] = static_cast< TR >( B[ B_idx( row_in, col, B_follow_dim ) ] );
+
+		__syncthreads();
+
+		int remaining{ S_range - block_offset };
+		int sum_range = remaining < MBLOCK_SIZE ? remaining : MBLOCK_SIZE;
+
+		for( int i{ 0 }; i < sum_range; ++i )
+			sum += Ablock[ threadIdx.y ][ i ] * Bblock[ i ][ threadIdx.x ];
+
+		__syncthreads();
+	}
+
+	if ( row_active && col_active )
+		out[ A_idx( row, col, A_follow_dim ) ] = sum;
 }
 
 

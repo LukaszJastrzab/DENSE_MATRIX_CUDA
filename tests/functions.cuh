@@ -11,7 +11,8 @@ template< typename T >
 T generate_random( double min_val, double max_val )
 {
 	static std::random_device rd;
-	static std::mt19937 gen( rd() );
+	//static std::mt19937 gen( rd() );
+	static std::mt19937 gen( 1234u );
 
 	std::uniform_real_distribution< double > dis( min_val, max_val );
 	std::uniform_int_distribution< int > sign_dis( 0, 1 );
@@ -34,8 +35,8 @@ thrust::complex< double > generate_random( double min_val, double max_val )
 }
 
 
-template < typename T >
-void print_matrix( std::vector< T >& matrix, size_t rows, size_t cols )
+template < typename T, typename Layout >
+void print_matrix( const std::vector< T >& matrix, const size_t rows, const size_t cols, const Layout idx, const size_t follow_dim )
 {
 	std::ofstream out( "matrix.tsv" );
 
@@ -43,7 +44,7 @@ void print_matrix( std::vector< T >& matrix, size_t rows, size_t cols )
 	{
 		for( size_t c = 0; c < cols; ++c )
 		{
-			auto value = matrix[ r + c * rows ];
+			auto value = matrix[ idx( r, c, follow_dim ) ];
 
 			std::ostringstream ss;
 			ss << std::setprecision( 15 ) << value;
