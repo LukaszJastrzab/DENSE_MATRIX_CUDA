@@ -25,7 +25,6 @@ add_executable(${PROJECT_NAME}
     tests/main.cu
     tests/functions.cuh
     external/utilities.cuh
-    external/dense_matrix.hpp
     src/dense_matrix_cuda.cuh
 )
 

@@ -439,6 +439,7 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 	case DYNAMIC_STATE::COL_INIT:
 	case DYNAMIC_STATE::EIGEN_VECTORS:
 	case DYNAMIC_STATE::SCHUR_VECTORS:
+	case DYNAMIC_STATE::SCHUR_FORM:
 		break;
 	case DYNAMIC_STATE::ROL_INIT:
 		A_COL = false;
@@ -452,6 +453,7 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 	case DYNAMIC_STATE::COL_INIT:
 	case DYNAMIC_STATE::EIGEN_VECTORS:
 	case DYNAMIC_STATE::SCHUR_VECTORS:
+	case DYNAMIC_STATE::SCHUR_FORM:
 		break;
 	case DYNAMIC_STATE::ROL_INIT:
 		B_COL = false;
@@ -460,39 +462,12 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 		throw std::invalid_argument( "dense_matrix_cuda: operator* - wrong B.m_dynamic_state" );
 	}
 
-	// test
-	if( A_COL )
-		print_matrix( A.m_matrix, A.m_rows, A.m_cols, column_major{}, A.m_rows );
-	else
-		print_matrix( A.m_matrix, A.m_rows, A.m_cols, row_major{}, A.m_cols );
-
-	if( B_COL )
-		print_matrix( B.m_matrix, B.m_rows, B.m_cols, column_major{}, B.m_rows );
-	else
-		print_matrix( B.m_matrix, B.m_rows, B.m_cols, row_major{}, B.m_cols );
-	// test
-
 	using R = std::common_type_t< U, V >;
 
-	dense_matrix_cuda< R > result( A.m_dynamic_state, A.m_rows, B.m_cols );
-
-	for( size_t r{ 0 }; r < A.m_rows; ++r )
-		for( size_t c{ 0 }; c < B.m_cols; ++c )
-		{
-			R mult_sum{};
-			for( size_t i{ 0 }; i < A.m_cols; ++i )
-				mult_sum += static_cast< R >( A.m_matrix[ A.calc_elem_idx( r, i ) ] ) * static_cast< R >( B.m_matrix[ B.calc_elem_idx( i, c ) ] );
-			result.set_element( mult_sum, r, c );
-		}
-
-	// test
-	print_matrix( result.m_matrix, A.m_rows, B.m_cols, column_major{}, B.m_rows );
-	// test
-
-	// new
 	R* d_result{ nullptr };
 	U* d_A{ nullptr };
 	V* d_B{ nullptr };
+
 	cudaMalloc( &d_result, A.m_rows * B.m_cols * sizeof( R ) );
 	cudaMalloc( &d_A, A.m_rows * A.m_cols * sizeof( U ) );
 	cudaMalloc( &d_B, B.m_rows * B.m_cols * sizeof( V ) );
@@ -512,21 +487,19 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 	if( A_COL && B_COL )
 		matrix_product <<< grid_dim, block_dim >>> ( d_result, d_A, d_B, A.m_rows, B.m_cols, A.m_cols, column_major{}, A.m_rows, column_major{}, B.m_rows );
 
-	//dense_matrix_cuda< R > result2;
 	std::vector< R > mresult( A.m_rows * B.m_cols, R{} );
 	cudaMemcpy( mresult.data(), d_result, A.m_rows * B.m_cols * sizeof( R ), cudaMemcpyDeviceToHost );
 
-	// test
-	std::vector< R > diff( A.m_rows * B.m_cols, R{} );
-	for( int i{ 0 }; i < diff.size(); ++i )
-		diff[ i ] = result.m_matrix[ i ] - mresult[ i ];
-	// test
+	dense_matrix_cuda< R > result;
 
+	result.m_dynamic_state = A.m_dynamic_state;
+	result.m_rows = A.m_rows;
+	result.m_cols = B.m_cols;
+	result.m_matrix = std::move( mresult );
 
 	cudaFree( d_result );
 	cudaFree( d_A );
 	cudaFree( d_B );
-	// new
 
 	return result;
 }
@@ -678,18 +651,8 @@ void matrix_product(
 	const bool row_active{ row < A_rows };
 	const bool col_active{ col < B_cols };
 
-
-	// test
-	//if( blockIdx.y == 1 && blockIdx.x == 0 )
-	if( threadIdx.x == 1 && threadIdx.y == 0 )
-	{
-		int test = 7;
-	}
-	// test
-
 	__shared__ TR Ablock[ MBLOCK_SIZE ][ MBLOCK_SIZE ];
 	__shared__ TR Bblock[ MBLOCK_SIZE ][ MBLOCK_SIZE ];
-
 
 	TR sum{};
 

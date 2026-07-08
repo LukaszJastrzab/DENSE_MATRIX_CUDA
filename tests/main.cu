@@ -11,47 +11,6 @@ constexpr double max_double = 10000.0;
 constexpr double min_float = 0.01;
 constexpr double max_float = 100.0;
 
-// test
-template < typename T >
-void multiplication_test()
-{
-	size_t mx_size{ 7 };
-
-	// double type used in solving / refinement
-	using DT = typename double_type< T >::type;
-	// real type used in solving / refinement
-	using RT = typename real_type< T >::type;
-
-	// tested matrix
-	dmc::dense_matrix_cuda< T > A, B, C;
-
-	double val_min{ min_float }, val_max{ max_float };// , eps{ eps_float };
-
-#ifndef __CUDA_ARCH__
-	if constexpr( std::is_same< typename real_type < T >::type, double >::value )
-#endif
-	{
-		val_min = min_double;
-		val_max = max_double;
-		//eps = eps_double;
-	}
-
-	A.init( dmc::DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
-	B.init( dmc::DYNAMIC_STATE::ROL_INIT, mx_size, mx_size );
-
-	generate_rand_matrix( A, val_min, val_max );
-	generate_rand_matrix( B, val_min, val_max );
-
-
-
-	EXPECT_NO_THROW( C = A * B );
-}
-
-TEST( matrix_product_, matrix_product_test )
-{
-	multiplication_test< float >();
-}
-// test
 
 enum EIGEN_PROBLEM_TYPE
 {
