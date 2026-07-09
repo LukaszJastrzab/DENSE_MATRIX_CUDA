@@ -113,13 +113,14 @@ public:
 	friend dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cuda< U >& A, const V& b );
 
 	/// performs blocked QR decomposition by Householder algorithm "in situ" using CUDA
-	void QR_decomposition( bool scaling, const size_t block_size = 8 );
+	void QR_decomposition( bool scaling = false, const size_t block_size = 8 );
 	/// solves equation Ax=b, where A is decomposed to factors QR (by Householders method)
 	void solve_QR( std::vector< DT >& x, const std::vector< DT >& b ) const;
 
 	/// decomposes matrix "in situ" to factors LU using Gauss elimination using CUDA
 	/// with partial pivoting (one column search)
-	void LU_decomposition( bool scaling, const size_t block_size = 32 );
+	void LU_decomposition( bool scaling = false, const size_t block_size = 32 );
+	void LU_decomposition_small();
 	/// solves equation Ax=b, where A is decomposed to factors LU (by Gauss elimination)
 	void solve_LU( std::vector< DT >& x, const std::vector< DT >& b, std::vector< DT >* y = nullptr ) const;
 	/// rows scaling
@@ -760,6 +761,24 @@ void LU_Schur_complement(
 		res -= L[ RLD( threadIdx.y, i, mx_size ) ] * U[ RLD( i, threadIdx.x, mx_size ) ];
 
 	A_in[ in_idx ] = res;
+}
+
+template< typename T >
+void dense_matrix_cuda< T >::LU_decomposition_small()
+{
+	if( m_dynamic_state != DYNAMIC_STATE::ROL_INIT )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition() - m_dynamic_state != DYNAMIC_STATE::ROL_INIT" );
+	if( m_rows != m_cols )
+		throw std::invalid_argument( "dense_matrix_cuda< T >::LU_decomposition: m_rows != m_cols" );
+
+	m_p_row.resize( m_rows );
+	std::iota( m_p_row.begin(), m_p_row.end(), 0 );
+
+	m_scalars.resize( m_rows, 1.0 );
+
+	LU_block_decomposition_cpu( m_rows, 0, m_rows - 1 );
+
+	m_dynamic_state = DYNAMIC_STATE::LU_DECOMPOSED;
 }
 
 template< typename T >
@@ -2118,7 +2137,8 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 						M2x2.m_matrix[ RLD( 1, 1, this_block_size ) ] = static_cast< DC >( m_matrix[ CLD( j01, j01, m_rows ) ] ) - static_cast< DC >( lambda );
 
 						std::vector< DC > x( this_block_size, DC{} );
-						M2x2.LU_decomposition( true, this_block_size );
+
+						M2x2.LU_decomposition_small();
 						M2x2.solve_LU( x, b );
 
 						EV.m_matrix[ CLD( j0, i, m_rows ) ] = static_cast< CT2 >( x[ 0 ] );
