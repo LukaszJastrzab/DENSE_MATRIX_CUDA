@@ -12,6 +12,171 @@ constexpr double min_float = 0.01;
 constexpr double max_float = 100.0;
 
 
+enum EIGEN_PROBLEM_TYPE
+{
+	HERMITIAN = 0,
+	COMPLEX = 1,
+	GENERAL = 2
+};
+
+template < typename T >
+void generate_rand_matrix( dmc::dense_matrix_cuda< T >& mx, double val_min, double val_max )
+{
+	for( size_t row{ 0 }; row < mx.get_rows_amount(); ++row )
+		for( size_t col{ 0 }; col < mx.get_cols_amount(); ++col )
+		{
+			auto val{ generate_random< T >( val_min, val_max ) };
+			mx.set_element( val, row, col );
+		}
+}
+
+template < typename T >
+void generate_hermitian_rand_matrix( dmc::dense_matrix_cuda< T >& mx, double val_min, double val_max )
+{
+	// real type used in solving / refinement
+	using RT = typename real_type< T >::type;
+
+	for( size_t row{ 0 }; row < mx.get_rows_amount(); ++row )
+	{
+		auto val{ static_cast< T >( generate_random< RT >( val_min, val_max ) ) };
+		mx.set_element( val, row, row );
+
+		for( size_t col{ row + 1 }; col < mx.get_cols_amount(); ++col )
+		{
+			auto val{ generate_random< T >( val_min, val_max ) };
+			mx.set_element( val, row, col );
+			mx.set_element( conjugate( val ), col, row );
+		}
+	}
+}
+
+template < typename T >
+void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
+{
+	size_t mx_size{ 55 };
+
+	// double type used in solving / refinement
+	using DT = typename double_type< T >::type;
+	// real type used in solving / refinement
+	using RT = typename real_type< T >::type;
+
+	// tested matrix
+	dmc::dense_matrix_cuda< T > A, A_;
+	dmc::dense_matrix_cuda< thrust::complex< RT > > IL;
+
+	// Schur vectors
+	dmc::dense_matrix_cuda< T > SV, SVT;
+	// eigenvectors
+	dmc::dense_matrix_cuda< thrust::complex< RT > > EV;
+
+	// eigen values
+	vector< thrust::complex< RT > > L;
+
+	double val_min{ min_float }, val_max{ max_float }, eps{ eps_float };
+
+#ifndef __CUDA_ARCH__
+	if constexpr( std::is_same< typename real_type < T >::type, double >::value )
+#endif
+	{
+		val_min = min_double;
+		val_max = max_double;
+		eps = eps_double;
+	}
+
+	A.init( dmc::DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
+	IL.init( dmc::DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
+
+	bool double_shift{ true };
+
+	switch( eigen_ptype )
+	{
+	case EIGEN_PROBLEM_TYPE::COMPLEX:
+		double_shift = false;
+		generate_rand_matrix( A, val_min, val_max );
+		break;
+	case EIGEN_PROBLEM_TYPE::GENERAL:
+		generate_rand_matrix( A, val_min, val_max );
+		break;
+	case EIGEN_PROBLEM_TYPE::HERMITIAN:
+		double_shift = false;
+		generate_hermitian_rand_matrix( A, val_min, val_max );
+		break;
+	}
+
+	A_ = A;
+
+	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 1000, double_shift ) );
+
+	// verification of the results
+	// ===========================
+	SVT = SV;
+	SVT.hermitian_transpose();
+	auto schur_residual_check = A_ - SV * A * SVT;
+	EXPECT_LE( schur_residual_check.norm_max() / A_.norm_max(), mx_size * eps );
+
+	for( size_t rc{ 0 }; rc < mx_size; ++rc )
+		IL.set_element( L[ rc ], rc, rc );
+
+	auto eigen_residual_check = A_ * EV - EV * IL;
+	EXPECT_LE( eigen_residual_check.norm_inf() / A_.norm_inf(), mx_size * eps );
+
+	EXPECT_TRUE( true );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_float )
+{
+	eigenvalues_test< float >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_double )
+{
+	eigenvalues_test< double >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_complex_float )
+{
+	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+TEST( hermitian_eigen_values_problem, eigen_test_complex_double )
+{
+	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::HERMITIAN );
+}
+
+
+TEST( complex_eigen_values_problem, eigen_test_complex_float )
+{
+	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::COMPLEX );
+}
+
+TEST( complex_eigen_values_problem, eigen_test_complex_double )
+{
+	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::COMPLEX );
+}
+
+
+TEST( general_eigen_values_problem, eigen_test_float )
+{
+	eigenvalues_test< float >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+TEST( general_eigen_values_problem, eigen_test_double )
+{
+	eigenvalues_test< double >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+TEST( general_eigen_values_problem, eigen_test_complex_float )
+{
+	eigenvalues_test< thrust::complex< float > >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+TEST( general_eigen_values_problem, eigen_test_complex_double )
+{
+	eigenvalues_test< thrust::complex< double > >( EIGEN_PROBLEM_TYPE::GENERAL );
+}
+
+
+
 enum class SOLVING_TYPE : uint8_t
 {
 	QR_decomposition,
@@ -40,16 +205,16 @@ void decompositions_block_test( const SOLVING_TYPE solving_type, const bool scal
 	{
 		for( int mx_size = 500; mx_size > 1; mx_size -= 200 )
 		{
-			dense_matrix_cuda< T > A;
+			dmc::dense_matrix_cuda< T > A;
 
 			switch( solving_type )
 			{
 			case SOLVING_TYPE::QR_decomposition:
-				A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
+				A.init( dmc::DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
 				break;
 
 			case SOLVING_TYPE::LU_decomposition:
-				A.init( DYNAMIC_STATE::ROL_INIT, mx_size, mx_size );
+				A.init( dmc::DYNAMIC_STATE::ROL_INIT, mx_size, mx_size );
 				break;
 			}
 
@@ -188,18 +353,18 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 		eps = eps_double;
 	}
 
-	size_t mx_size{ 5 };
+	size_t mx_size{ 2000 };
 
-	dense_matrix_cuda< T > A;
+	dmc::dense_matrix_cuda< T > A;
 
 	switch( solving_type )
 	{
 	case SOLVING_TYPE::QR_decomposition:
-		A.init( DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
+		A.init( dmc::DYNAMIC_STATE::COL_INIT, mx_size, mx_size );
 		break;
 
 	case SOLVING_TYPE::LU_decomposition:
-		A.init( DYNAMIC_STATE::ROL_INIT, mx_size, mx_size );
+		A.init( dmc::DYNAMIC_STATE::ROL_INIT, mx_size, mx_size );
 		break;
 	}
 
@@ -316,4 +481,3 @@ TEST( big_non_singular_linear_equation_complex_double, LU_decomposition_blocked_
 {
 	decompositions_big_example< thrust::complex< double > >( SOLVING_TYPE::LU_decomposition, true );
 }
-
