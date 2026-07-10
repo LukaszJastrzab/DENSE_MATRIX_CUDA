@@ -386,7 +386,7 @@ void decompositions_big_example( const SOLVING_TYPE solving_type, const bool sca
 	switch( solving_type )
 	{
 	case SOLVING_TYPE::QR_decomposition:
-		A.QR_decomposition( scaling, 4 );
+		A.QR_decomposition( scaling );
 		break;
 
 	case SOLVING_TYPE::LU_decomposition:

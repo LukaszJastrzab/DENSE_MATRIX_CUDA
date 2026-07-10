@@ -191,7 +191,7 @@ private:
 
 };
 
-#define MBLOCK_SIZE 4
+#define MPRODUCT_BLOCK_SIZE 8
 
 __host__ __device__ __forceinline__
 size_t RLD( size_t row, size_t col, size_t cols )
@@ -476,8 +476,8 @@ dense_matrix_cuda< std::common_type_t< U, V > > operator*( const dense_matrix_cu
 	cudaMemcpy( d_A, A.m_matrix.data(), A.m_rows * A.m_cols * sizeof( U ), cudaMemcpyHostToDevice );
 	cudaMemcpy( d_B, B.m_matrix.data(), B.m_rows * B.m_cols * sizeof( V ), cudaMemcpyHostToDevice );
 
-	const dim3 block_dim( MBLOCK_SIZE, MBLOCK_SIZE );
-	const dim3 grid_dim( div_up( B.m_cols, MBLOCK_SIZE ), div_up( A.m_rows, MBLOCK_SIZE ) );
+	const dim3 block_dim( MPRODUCT_BLOCK_SIZE, MPRODUCT_BLOCK_SIZE );
+	const dim3 grid_dim( div_up( B.m_cols, MPRODUCT_BLOCK_SIZE ), div_up( A.m_rows, MPRODUCT_BLOCK_SIZE ) );
 
 	if( !A_COL && !B_COL )
 		matrix_product <<< grid_dim, block_dim >>> ( d_result, d_A, d_B, A.m_rows, B.m_cols, A.m_cols, row_major{}, A.m_cols, row_major{}, B.m_cols );
@@ -600,7 +600,7 @@ void dense_matrix_cuda< T >::choose_pivot( const size_t step )
 		}
 	}
 
-	std::swap( m_p_row[ ROW ], m_p_row[ step ] );
+	permute_rows( ROW, step );
 }
 
 
@@ -652,12 +652,12 @@ void matrix_product(
 	const bool row_active{ row < A_rows };
 	const bool col_active{ col < B_cols };
 
-	__shared__ TR Ablock[ MBLOCK_SIZE ][ MBLOCK_SIZE ];
-	__shared__ TR Bblock[ MBLOCK_SIZE ][ MBLOCK_SIZE ];
+	__shared__ TR Ablock[ MPRODUCT_BLOCK_SIZE ][ MPRODUCT_BLOCK_SIZE ];
+	__shared__ TR Bblock[ MPRODUCT_BLOCK_SIZE ][ MPRODUCT_BLOCK_SIZE ];
 
 	TR sum{};
 
-	for( int block_offset{ 0 }; block_offset < S_range; block_offset += MBLOCK_SIZE )
+	for( int block_offset{ 0 }; block_offset < S_range; block_offset += MPRODUCT_BLOCK_SIZE )
 	{
 		int col_in = threadIdx.x + block_offset;
 		if( row_active && col_in < S_range )
@@ -670,7 +670,7 @@ void matrix_product(
 		__syncthreads();
 
 		int remaining{ S_range - block_offset };
-		int sum_range = remaining < MBLOCK_SIZE ? remaining : MBLOCK_SIZE;
+		int sum_range = remaining < MPRODUCT_BLOCK_SIZE ? remaining : MPRODUCT_BLOCK_SIZE;
 
 		for( int i{ 0 }; i < sum_range; ++i )
 			sum += Ablock[ threadIdx.y ][ i ] * Bblock[ i ][ threadIdx.x ];
