@@ -105,7 +105,7 @@ void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 
 	A_ = A;
 
-	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 1000, double_shift ) );
+	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 1000, 0, double_shift ) );
 
 	// verification of the results
 	// ===========================
