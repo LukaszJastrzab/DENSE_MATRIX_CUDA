@@ -62,6 +62,7 @@ void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 
 	// tested matrix
 	dmc::dense_matrix_cuda< T > A, A_;
+	// diagonal matrix with eigen values
 	dmc::dense_matrix_cuda< thrust::complex< RT > > IL;
 
 	// Schur vectors
@@ -103,6 +104,8 @@ void eigenvalues_test( EIGEN_PROBLEM_TYPE eigen_ptype)
 		break;
 	}
 
+	// make copy before dynamic operations
+	// ===================================
 	A_ = A;
 
 	EXPECT_NO_THROW( A.compute_eigenvalues_QR( L, &SV, &EV, 1000, 0, double_shift ) );

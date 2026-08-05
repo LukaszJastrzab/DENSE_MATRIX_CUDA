@@ -47,6 +47,8 @@ public:
 	~dense_matrix_cuda() = default;
 	/// assign operator of the same type T
 	dense_matrix_cuda& operator=( const dense_matrix_cuda& ) = default;
+	/// assign move operator of the same type T
+	dense_matrix_cuda& operator=( dense_matrix_cuda&& ) = default;
 
 	/// return amount of rows
 	size_t get_rows_amount() const;
