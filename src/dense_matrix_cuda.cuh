@@ -134,7 +134,7 @@ public:
 	void QHQ_decomposition();
 	/// computes eqigen values using QR algorithm
 	template< typename C1, typename C2 >
-	void compute_eigenvalues_QR( std::vector< thrust::complex< C1 > >& l, dense_matrix_cuda* SV, dense_matrix_cuda< thrust::complex< C2 > >* EV, const unsigned int max_iter, const size_t max_eigens_count = 0, const bool Francis = true, const double acc = std::numeric_limits< RT >::epsilon() );
+	void compute_eigenvalues_QR( std::vector< thrust::complex< C1 > >& l, dense_matrix_cuda* SV, dense_matrix_cuda< thrust::complex< C2 > >* EV, const unsigned int max_iter, const bool Francis = true, const double acc = std::numeric_limits< RT >::epsilon() );
 
 private:
 	/// function calculates index in one of initial matrix state
@@ -2160,7 +2160,7 @@ void dense_matrix_cuda< T >::compute_eigenvectors( dense_matrix_cuda< thrust::co
 
 template< typename T >
 template< typename C1, typename C2 >
-void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::complex< C1 > >& l, dense_matrix_cuda* SV, dense_matrix_cuda< thrust::complex< C2 > >* EV, const unsigned int max_iter, const size_t max_eigens_count, const bool Francis, const double acc )
+void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::complex< C1 > >& l, dense_matrix_cuda* SV, dense_matrix_cuda< thrust::complex< C2 > >* EV, const unsigned int max_iter, const bool Francis, const double acc )
 {
 	if( m_rows != m_cols )
 		throw std::invalid_argument( "dense_matrix_cuda< T >::compute_eigenvalues_QR - m_rows != m_cols" );
@@ -2170,11 +2170,6 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 		throw std::invalid_argument( "dense_matrix_cuda< T >::compute_eigenvalues_QR - m_dynamic_state != DYNAMIC_STATE::QHQ_DECOMPOSED" );
 
 	using CT1 = thrust::complex< C1 >;
-
-	if( max_iter == 0 )
-		const_cast< unsigned int& >( max_iter ) = std::numeric_limits< unsigned int >::max();
-	if( max_eigens_count == 0 || max_eigens_count > m_cols )
-		const_cast< size_t& >( max_eigens_count ) = m_cols;
 
 	auto block_size = Francis ? 3ull : 2ull;
 	l.resize( m_rows, CT1{} );
@@ -2208,9 +2203,7 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 
 	blocks[ 0 ] = m_rows;
 
-	size_t eigens_count{ 0 };
-
-	for( size_t iter{ 0 }; iter < max_iter && eigens_count < max_eigens_count; ++iter )
+	for( size_t iter{ 0 }; iter < max_iter || max_iter == 0; ++iter )
 	{
 		// deflection
 		// ==========
@@ -2242,7 +2235,7 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 
 			if( b_size == 2 )
 			{
-				auto ndefacc{ abs_val( m_matrix[ CLD( i01, i0, m_rows ) ] ) };				
+				auto ndefacc{ abs_val( m_matrix[ CLD( i01, i0, m_rows ) ] ) };
 				auto defacc = b2x2_deflacc.find( i0 );
 
 				if( defacc == b2x2_deflacc.end() )
@@ -2252,13 +2245,14 @@ void dense_matrix_cuda< T >::compute_eigenvalues_QR( std::vector< thrust::comple
 					remove2x2 = true;
 					b2x2_deflacc.erase( defacc );
 				}
+				else
+					b2x2_deflacc[ i0 ] = ndefacc;
 			}
 
 			if( b_size == 1 || remove2x2 )
 			{
 				final_blocks[ i0 ] = i1;
 				it = blocks.erase( it );
-				eigens_count += b_size;
 			}
 			else
 				++it;
